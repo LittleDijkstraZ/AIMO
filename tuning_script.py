@@ -605,4 +605,4 @@ if __name__ == "__main__":
         )
     from functools import partial
     objective = partial(objective, tuning_dir="tuning")
-    study.optimize(objective, n_trials=66)
+    study.optimize(objective, n_trials=240)
