@@ -263,7 +263,7 @@ Assistant:"""
     
     total_results = {}
     total_answers = {}
-    best_stats = {}s
+    best_stats = {}
     total_outputs = {}
     question_type_counts = {}
 
