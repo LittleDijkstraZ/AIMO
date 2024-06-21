@@ -32,12 +32,16 @@ def return_last_print(output, n=-1, grab_error=False):
             return lines[n]
         else: # jason
             error_locations = output.split(', line ')
-            if error_locations:
+            if len(error_locations)>1:
                 error_text = 'Traceback: line ' + error_locations[-1]
+            else:
+                error_text = output
             return error_text
     else:
         return ""
 
+
+import traceback
 def process_code(code, return_shell_output=False):
     
     def repl(match):
@@ -71,31 +75,39 @@ except Exception as e:
     
     batcmd = 'timeout 7 ' + sys.executable + f' {code_file}'
     try:
-        shell_output = subprocess.check_output(batcmd, shell=True).decode('utf8')
+        shell_output = subprocess.check_output(batcmd, shell=True, stderr=subprocess.STDOUT).decode('utf8')
         return_value = return_last_print(shell_output, -1)
-        print(shell_output)
-        if return_shell_output:
-            if return_value=='FAIL':
-                CODE_STATUS = False
-                return_value = return_last_print(shell_output, grab_error=True)
-                if "not defined" in return_value:
-                    return_value+='\nTry checking the formatting and imports'
-            else:
-                CODE_STATUS = True
-            os.remove(code_file)
-            return return_value, CODE_STATUS  
+        
         code_output = round(float(eval(return_value))) % 1000
-    except Exception as e:
-        print(e,'shell_output')
+    except subprocess.CalledProcessError as e:
+        shell_output = e.output.decode('utf-8')
+        return_value = 'FAIL'
         code_output = -1
-    
+    except Exception as e:
+        shell_output = 'Unknown Error'
+        return_value = 'FAIL'
+        code_output = -1
+
+    print(shell_output)
+
     if return_shell_output:
-        if code_output==-1:
+        if return_value=='FAIL':
             CODE_STATUS = False
+            return_value = return_last_print(shell_output, grab_error=True)
+            if "not defined" in return_value:
+                return_value+='\nTry checking the formatting and imports'
         else:
             CODE_STATUS = True
         os.remove(code_file)
-        return code_output, CODE_STATUS  
+        return return_value, CODE_STATUS  
+    
+    # if return_shell_output:
+    #     if code_output==-1:
+    #         CODE_STATUS = False
+    #     else:
+    #         CODE_STATUS = True
+    #     os.remove(code_file)
+    #     return code_output, CODE_STATUS  
     
     os.remove(code_file)
     return code_output
