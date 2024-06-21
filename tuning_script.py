@@ -42,24 +42,54 @@ import pandas as pd
 def objective(trial, 
               tuning_dir):
     
+    with open(f'outputs_test.txt', 'w') as fh:
+            fh.write('x')
+    
     trial_number = trial.number
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    os.makedirs(tuning_dir, exist_ok=True)
     config_dir = f'{tuning_dir}/config_{timestamp}.json'
     
+
+    code = """
+Below is a math problem you are to solve (positive numerical answer):
+\"{}\"
+To accomplish this, first determine a sympy-based approach for solving the problem by listing each step to take and what functions need to be called in each step. Be clear so even an idiot can follow your instructions, and remember, your final answer should be positive integer, not an algebraic expression!
+Write the entire script covering all the steps (use comments and document it well) and print the result. After solving the problem, output the final numerical answer within \\boxed{}.
+
+Assistant: 
+
+Interesting, let's analyze step by step:"""
+    cot = \
+"""
+
+Below is a math problem you are to solve (positive numerical answer!):
+\"{}\"
+Analyze this problem and think step by step to come to a solution with programs. After solving the problem, output the final numerical answer within \\boxed{}.
+
+Assistant:"""
+
     config = {
         'temperature': trial.suggest_float('temperature', 0.5, 2.0),
         'top_p': trial.suggest_float('top_p', 0.85, 1.0),
-        'top_k': trial.suggest_int('top_k', 10, 100),
+        'top_k': trial.suggest_int('top_k', 16, 96, step=16),
         'temperature_coding': trial.suggest_float('temperature_coding', 0.5, 2.0),
         'top_p_coding': trial.suggest_float('top_p_coding', 0.85, 1.0),
-        'top_k_coding': trial.suggest_int('top_k_coding', 10, 100),
+        'top_k_coding': trial.suggest_int('top_k_coding', 16, 96, step=16),
 
-        'n_repetitions': trial.suggest_int('n_repetitions', 8, 16),
-        'TOTAL_TOKENS': trial.suggest_int('TOTAL_TOKENS', 1024, 2048),
+        # 'n_repetitions': trial.suggest_int('n_repetitions', 8, 16),
+        'n_repetitions': 12,
+        # 'TOTAL_TOKENS': trial.suggest_int('TOTAL_TOKENS', 1024, 2048),
+        'TOTAL_TOKENS': 1600,
         'REFLECTION': False,
-        'starting_counts': trial.suggest_categorical('starting_counts', [(2,2), (2,3), (3,2), (2,4), (4,2)]),
+        'starting_counts': trial.suggest_categorical('starting_counts', [0, 1, 2]),
+        # 'starting_counts': (3,2),
+        'prompt_options': [code, cot],
+
     }
+    starting_counts_options = [(4,2), (2,2), (2,4)]
+    config['starting_counts'] = starting_counts_options[config['starting_counts']]
 
 
     for _ in range(5): # clean the cache
@@ -68,8 +98,8 @@ def objective(trial,
                     time.sleep(0.2)
 
 
-    with open(config_dir) as f:
-        config = dict(json.load(f)) 
+    with open(config_dir, "w") as f:
+        json.dump(config, f, indent=2)
 
 
     torch.backends.cuda.enable_mem_efficient_sdp(False)
@@ -112,8 +142,8 @@ def objective(trial,
     MODEL_PATH = "./input/deepseek-math"#"/kaggle/input/gemma/transformers/7b-it/1"
     DEEP = True
 
-    config = AutoConfig.from_pretrained(MODEL_PATH)
-    config.gradient_checkpointing = True
+    model_config = AutoConfig.from_pretrained(MODEL_PATH)
+    model_config.gradient_checkpointing = True
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     
@@ -169,7 +199,7 @@ def objective(trial,
             torch_dtype="auto",
             trust_remote_code=True, 
             quantization_config=quantization_config,
-            config=config
+            config=model_config,
         )
     else:  
         model = AutoModelForCausalLM.from_pretrained(
@@ -178,7 +208,7 @@ def objective(trial,
             torch_dtype="auto",
             trust_remote_code=True,
             #quantization_config=quantization_config,
-            config=config
+            config=model_config
         )
     
     pipeline = transformers.pipeline(
@@ -208,57 +238,32 @@ def objective(trial,
     stop_words_ids = [tokenizer(stop_word, return_tensors='pt', add_special_tokens=False)['input_ids'].squeeze() for stop_word in stop_words]
     stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stop_words_ids)])
     
-    print(model.dtype, model.hf_device_map)
+    # print(model.dtype, model.hf_device_map)
 
 
     code = config['prompt_options'][0]
     cot = config['prompt_options'][1]
     prompt_options = [code,cot]
 
-    #     code = \
-    # """
-    # 假设你是IMO数学竞赛指导老师，以下是一个数学问题：
-    # \"{}\"
-    # \n
-    # 1. 请先把这个问题翻译成中文。
-    # 2. 接着，确定一个基于sympy，numpy，或者scipy的解题方法，列出每一步的操作。
-    # 3. 请编对应的python脚本，并打印结果。
-    # 4. 你的最终答案应该是正整数，而不是代数表达式！
-    # 5. 解决问题后，在\\boxed{}中输出最终的数值答案。
-
-    # 解：
-    # """
-    #     cot = \
-    # """
-    # 假设你是IMO数学竞赛指导老师，以下是一个数学问题：
-    # \"{}\"
-    # \n
-    # 1. 请先把这个问题翻译成中文。
-    # 2. 分析这个问题，明确问题的要求与条件，并确定解题思路。
-    # 3. 尝试一步步解决这个问题，在必要的地方列式计算。 
-    # 4. 必要时，可以通过python脚本来辅助计算。
-    # 5. 解决问题后，在\\boxed{}中输出最终的数值答案。
-
-    # 解：
-    # """
 
     torch.cuda.empty_cache()
     gc.collect()
 
     temperature = config['temperature']
     top_p = config['top_p']
-    top_k = config_dir['top_k']
+    top_k = config['top_k']
 
 
     temperature_coding = config['temperature_coding'] # code need to be strict, but still should have some creativity to get through difficult problems
     top_p_coding = config['top_p_coding']
-    top_k_coding = config_dir['top_k_coding']
+    top_k_coding = config['top_k_coding']
 
     starting_counts = config['starting_counts'] # 2:2, 2:3, 3:2, 2:4, 4:2 
+    temperatures = '|'.join(map(lambda x: f'{x:.02f}', [temperature, top_p, temperature_coding, top_p_coding]))
     
     total_results = {}
     total_answers = {}
-    best_stats = {}
+    best_stats = {}s
     total_outputs = {}
     question_type_counts = {}
 
@@ -270,7 +275,7 @@ def objective(trial,
     TOTAL_REFLECTION_TIME = 0
 
     total_prompt_correct_count = [0 for _ in range(len(prompt_options))]
-    for i in range(len(test_df)):
+    for i in tqdm(range(len(test_df))):
         test, sample_submission = test_df.loc[i:i, :], submission_df.loc[i:i, :]
         # iterate through every problems in the environment
         # use a loop get the test row and the corresponding sample_submissions row
@@ -572,11 +577,10 @@ def objective(trial,
     print(json.dumps({'model_score': model_score,
                   'prompt_correct': prompt_correct,}))
 
-    temperatures = '|'.join(map(str, [temperature, top_p, temperature_coding, top_p_coding]))
     trial_number = str(trial_number)
     trial_number = '0'*(4-len(trial_number)) + trial_number
     folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{prompt_correct}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}'
-    save_current_exp(folder_name, all_captured, final_submission, notebooks=config_dir)
+    save_current_exp(folder_name, all_captured, final_submission, notebooks=[config_dir])
     
     return model_score 
     # save_current_exp(folder_name, all_captured)
@@ -601,4 +605,4 @@ if __name__ == "__main__":
         )
     from functools import partial
     objective = partial(objective, tuning_dir="tuning")
-    study.optimize(objective, n_trials=100)
+    study.optimize(objective, n_trials=20)
