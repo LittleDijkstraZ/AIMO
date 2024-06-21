@@ -1,3 +1,6 @@
+import optuna
+from optuna.storages import JournalStorage, JournalFileStorage
+
 import re
 from collections import defaultdict
 from collections import Counter
@@ -16,16 +19,16 @@ from tqdm.auto import tqdm
 
 import argparse
 
-from .utils import save_current_exp
+from utils import *
 
 import time
-import torch
+import datetime
+
 
 import gc
-'''
-accelerate execution a bit
-'''
 
+import torch
+import transformers
 from transformers import (
     AutoModelForCausalLM, 
     AutoTokenizer, 
@@ -34,27 +37,42 @@ from transformers import (
     set_seed
 )
 
-import transformers
-
 import pandas as pd
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--trial_number', type=int, required=True)
-    parser.add_argument('--config_dir', type=str, required=True)
-    parser.add_argument('--gpu', type=int, required=True)
+def objective(trial, 
+              tuning_dir):
     
+    trial_number = trial.number
+    
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    config_dir = f'{tuning_dir}/config_{timestamp}.json'
+    
+    config = {
+        'temperature': trial.suggest_float('temperature', 0.5, 2.0),
+        'top_p': trial.suggest_float('top_p', 0.85, 1.0),
+        'top_k': trial.suggest_int('top_k', 10, 100),
+        'temperature_coding': trial.suggest_float('temperature_coding', 0.5, 2.0),
+        'top_p_coding': trial.suggest_float('top_p_coding', 0.85, 1.0),
+        'top_k_coding': trial.suggest_int('top_k_coding', 10, 100),
 
-    trial_number = parser.parse_args().trial_number
-    config_dir = parser.parse_args().config_dir
-    gpu = parser.parse_args().gpu
+        'n_repetitions': trial.suggest_int('n_repetitions', 8, 16),
+        'TOTAL_TOKENS': trial.suggest_int('TOTAL_TOKENS', 1024, 2048),
+        'REFLECTION': False,
+        'starting_counts': trial.suggest_categorical('starting_counts', [(2,2), (2,3), (3,2), (2,4), (4,2)]),
+    }
+
+
+    for _ in range(5): # clean the cache
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    time.sleep(0.2)
+
+
     with open(config_dir) as f:
-        config = json.load(f) 
+        config = dict(json.load(f)) 
 
 
     torch.backends.cuda.enable_mem_efficient_sdp(False)
-    print(f"Transformers Version: {transformers.__version__}")
     set_seed(42)
 
     NOTEBOOK_START_TIME = time.time()
@@ -77,15 +95,18 @@ if __name__ == "__main__":
 
     NOTEBOOK_START_TIME = time.time()
 
-
-
     n_repetitions = config['n_repetitions'] # Original notebook had 22 but times out :(
 
     TOTAL_TOKENS = config['TOTAL_TOKENS'] # if PRIVATE else 512
+    REFLECTION = config.get('REFLECTION', False)
     # TOTAL_TOKENS = 512 # if PRIVATE else 512
-    test_df = pd.read_csv('./input/ai-mathematical-olympiad-prize/test.csv')
-    submission_df = pd.read_csv('./input/ai-mathematical-olympiad-prize/sample_submission.csv')
-    TIME_LIMIT = 500 * len(submission_df)
+    # test_df = pd.read_csv('./input/ai-mathematical-olympiad-prize/test.csv')
+    # submission_df = pd.read_csv('./input/ai-mathematical-olympiad-prize/sample_submission.csv')
+    test_df = pd.read_csv('./test.csv')
+    submission_df = pd.read_csv('./sample_submission.csv')
+    
+    # TIME_LIMIT = 500 * len(submission_df)
+    TIME_LIMIT = 31500
 
 
     MODEL_PATH = "./input/deepseek-math"#"/kaggle/input/gemma/transformers/7b-it/1"
@@ -190,25 +211,9 @@ if __name__ == "__main__":
     print(model.dtype, model.hf_device_map)
 
 
-    code = \
-    """Below is a math problem you are to solve (positive numerical answer):
-    \"{}\"
-    To accomplish this, first determine a sympy-based approach for solving the problem by listing each step to take and what functions need to be called in each step. Be clear so even an idiot can follow your instructions, and remember, your final answer should be positive integer, not an algebraic expression!
-    Write the entire script covering all the steps (use comments and document it well) and print the result. After solving the problem, output the final numerical answer within \\boxed{}.
-
-    Approach:"""
-
-
-    # cot = \
-    # """Below is a math problem you are to solve (positive numerical answer!):
-    # \"{}\"
-    # Analyze this problem and think step by step to come to a solution with programs. After solving the problem, output the final numerical answer within \\boxed{}.\n\n"""
-
-    cot = \
-    """Below is a math problem you are to solve (positive numerical answer!):
-    \"{}\"
-    Analyze this problem and think step by step to come to a solution. You may use python to assist with solving it. Output the final numerical answer within \\boxed{}.\n\n"""
-
+    code = config['prompt_options'][0]
+    cot = config['prompt_options'][1]
+    prompt_options = [code,cot]
 
     #     code = \
     # """
@@ -240,36 +245,31 @@ if __name__ == "__main__":
     torch.cuda.empty_cache()
     gc.collect()
 
-    prompt_options = [code,cot]
     temperature = config['temperature']
     top_p = config['top_p']
+    top_k = config_dir['top_k']
+
 
     temperature_coding = config['temperature_coding'] # code need to be strict, but still should have some creativity to get through difficult problems
     top_p_coding = config['top_p_coding']
+    top_k_coding = config_dir['top_k_coding']
 
+    starting_counts = config['starting_counts'] # 2:2, 2:3, 3:2, 2:4, 4:2 
     
     total_results = {}
     total_answers = {}
     best_stats = {}
     total_outputs = {}
     question_type_counts = {}
-    starting_counts = config['starting_counts'] # 2:2, 2:3, 3:2, 2:4, 4:2 
-
-
 
     all_captured = []
-
-    import datetime
-    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-
-    all_answers = {}
-
-
+    all_self_reflections = []
 
     final_submission = pd.DataFrame(columns=submission_df.columns)
-
     model_score = 0
+    TOTAL_REFLECTION_TIME = 0
 
+    total_prompt_correct_count = [0 for _ in range(len(prompt_options))]
     for i in range(len(test_df)):
         test, sample_submission = test_df.loc[i:i, :], submission_df.loc[i:i, :]
         # iterate through every problems in the environment
@@ -278,6 +278,8 @@ if __name__ == "__main__":
         total_answers_to_gen = 0
         valid_answers_generated = 0
         answers_matched = 0
+        self_reflection_list = []
+        prompt_correct_count = [0 for _ in range(len(prompt_options))]
         with io.capture_output() as captured: # i capture the printouts
 
             print(f"Solving problem {i} ...")
@@ -290,14 +292,13 @@ if __name__ == "__main__":
                 break
                 
             for trial_j in tqdm(range(n_repetitions)):   
-
                 problem = test['problem'].values[0]
-                print(f"\n\n\nQUESTION {i} - {trial_j} - TIME_SPENT : {TIME_SPENT:.0f} secs")
+                print(f"\n\n\n## QUESTION {i} - {trial_j} \n- TIME_SPENT : {TIME_SPENT:.0f} secs\n")
                 
                 best, best_count = best_stats.get(i,(-1,-1))
-                if best_count>np.sqrt(trial_j)+1:
-                    print("SKIPPING CAUSE ALREADY FOUND BEST")
-                    continue
+                # if best_count>np.sqrt(trial_j)+1:
+                #     print("SKIPPING CAUSE ALREADY FOUND BEST")
+                #     continue
 
                 total_answers_to_gen += 1
                     
@@ -316,14 +317,14 @@ if __name__ == "__main__":
                     code_error = None
                     code_error_count = 0
                     code_output = -1
-                    #initail_message = problem  + tool_instruction 
                     counts = np.array([text_answers,code_answers])
 
-                    draw = choice(prompt_options, 1,
-                                p=counts/counts.sum())
-
+                    draw_index = choice(range(len(prompt_options)), 1, p=counts/counts.sum())[0]
+                    draw = [prompt_options[draw_index]]
+                    # draw = choice(prompt_options, 1,
+                    #             p=counts/counts.sum())
                     initail_message = draw[0].format(problem,"{}")            
-                    prompt = f"User: {initail_message}"
+                    prompt = f"User:\n{initail_message}"
 
                     current_printed = len(prompt)
                     print(f"{trial_j}_{prompt}\n")
@@ -332,13 +333,15 @@ if __name__ == "__main__":
                     input_len = len(model_inputs['input_ids'][0])
 
                     generation_output = model.generate(**model_inputs, 
-                                                    max_new_tokens=TOTAL_TOKENS-ALREADY_GEN,
-                                                    return_dict_in_generate=USE_PAST_KEY,
-                                                    do_sample = True,
-                                                    temperature = temperature,
-                                                    top_p = top_p,
-                                                    num_return_sequences=1,
-                                                    stopping_criteria = stopping_criteria)
+                                                max_new_tokens=TOTAL_TOKENS-ALREADY_GEN,
+                                                return_dict_in_generate=USE_PAST_KEY,
+                                                do_sample = True,
+                                                temperature = temperature,
+                                                top_p = top_p,
+                                                top_k = top_k,
+                                                num_return_sequences=1,
+                                                stopping_criteria = stopping_criteria,
+                                                pad_token_id=tokenizer.eos_token_id) #
 
                     if USE_PAST_KEY:
                         output_ids = generation_output.sequences[0]
@@ -360,6 +363,7 @@ if __name__ == "__main__":
                         if (decoded_output[-len("```python"):]=="```python"):
                             temperature_inner=temperature_coding
                             top_p_inner = top_p_coding
+                            top_k_inner = top_k_coding
                             prompt = decoded_output
                         else:
                             temperature_inner=temperature
@@ -389,7 +393,7 @@ if __name__ == "__main__":
                                 if not CODE_STATUS:
                                     cummulative_code = cummulative_code[:-len(code_text)]
 
-                                    if code_error_count>=1:
+                                    if code_error_count>=2: # more allowance
                                         print("REPEATED ERRORS")
                                         break
 
@@ -407,8 +411,6 @@ if __name__ == "__main__":
                                 else:
                                     prompt = decoded_output+'\n'+str(code_output)+'\n```\n' +self_correcting_prompt
                             else:
-                                self_correcting_prompt = "Let's analyze and fix the error in our code, and then continue to solve the math problem."
-
                                 prompt = decoded_output
                                 cummulative_code=""
 
@@ -423,14 +425,17 @@ if __name__ == "__main__":
                             old_values = None
 
                         generation_output = model.generate(**model_inputs, 
-                                                        max_new_tokens=TOTAL_TOKENS-ALREADY_GEN, 
-                                                        return_dict_in_generate=USE_PAST_KEY,
-                                                        past_key_values=old_values,
-                                                        do_sample = True,
-                                                        temperature = temperature_inner,
-                                                        top_p = top_p_inner,
-                                                        num_return_sequences=1, 
-                                                        stopping_criteria = stopping_criteria)
+                                                    max_new_tokens=TOTAL_TOKENS-ALREADY_GEN, 
+                                                    return_dict_in_generate=USE_PAST_KEY,
+                                                    past_key_values=old_values,
+                                                    do_sample = True,
+                                                    temperature = temperature_inner,
+                                                    top_p = top_p_inner,
+                                                    top_k = top_k_inner,
+                                                    num_return_sequences=1, 
+                                                    stopping_criteria = stopping_criteria,
+                                                    pad_token_id=tokenizer.eos_token_id) # for open ended gen
+
 
                         if USE_PAST_KEY:
                             output_ids = generation_output.sequences[0]
@@ -450,7 +455,6 @@ if __name__ == "__main__":
                         output_ids = generation_output[0]
 
                     raw_output = tokenizer.decode(output_ids[input_len:], skip_special_tokens=True)
-                    #print(f"\n\nOutput :\n{raw_output}\n")                            
                     result_output = process_text_output(raw_output)
                     
                     try:
@@ -475,6 +479,37 @@ if __name__ == "__main__":
                     valid_answer_obtained = True
 
                 valid_answers_generated += int(valid_answer_obtained)
+
+                # self reflection: jason
+                REFLECTION_TIME_START = time.time()
+                self_reflection_text = 'None'
+                if result_output == -1 or result_output != test['answer'].values[0]:
+                    if REFLECTION:
+                        self_reflection = f"\n\nUser: Thanks for trying. In fact, the correct answer is {test['answer'].values[0]}. Can you briefly summarize what you did wrong and what will you do differently if you are to try again?\n\nAssistant:"
+                        prompt = decoded_output + self_reflection
+                        
+                        model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
+                        input_tokens_len = len(model_inputs['input_ids'][0])
+                        old_values = generation_output.past_key_values
+                        self_reflection_output = model.generate(**model_inputs, 
+                                                        max_new_tokens=128, 
+                                                        return_dict_in_generate=USE_PAST_KEY,
+                                                        past_key_values=old_values,
+                                                        do_sample = True,
+                                                        temperature = 0.9,
+                                                        top_p = 1,
+                                                        num_return_sequences=1, 
+                                                        stopping_criteria = stopping_criteria,
+                                                        
+                                                        pad_token_id=tokenizer.eos_token_id) # for open ended gen
+                        new_content = self_reflection_output.sequences[0][input_tokens_len:]
+                        self_reflection_text = tokenizer.decode(new_content, skip_special_tokens=True)
+                else:
+                    prompt_correct_count[draw_index] += 1
+                self_reflection_text = f'\n### Question {i} {trial_j} reflection:\n' + self_reflection_text
+                self_reflection_list.append(self_reflection_text)
+                REFLECTION_TIME_END = time.time() - REFLECTION_TIME_START
+                TOTAL_REFLECTION_TIME += REFLECTION_TIME_END
 
                 if len(outputs) > 0:
                     occurances = Counter(outputs).most_common()
@@ -518,19 +553,52 @@ if __name__ == "__main__":
             final_submission = pd.concat([final_submission, sample_submission])
 
         cur_process = captured.stdout
-        cur_process += '\n==sep==\n'
+        cur_process += '\nprompt correctness:'+ str(prompt_correct_count)
+        cur_reflections = ''.join(self_reflection_list)
+        all_self_reflections.append(cur_reflections)
+
+        cur_process += '\n\n## Self-Reflections\n'+cur_reflections
+        cur_process += '\n---\n'
+
         with open(f'outputs_{i}.txt', 'w') as fh:
             fh.write(cur_process)
         all_captured.append(cur_process)
+        total_prompt_correct_count = np.array(total_prompt_correct_count) + np.array(prompt_correct_count)
 
+    TIME_SPENT = time.time() - NOTEBOOK_START_TIME - TOTAL_REFLECTION_TIME
     model_score = model_score / len(test_df)
+    prompt_correct = total_prompt_correct_count.tolist()
 
-
-    print(json.dumps({'model_score': model_score}))
+    print(json.dumps({'model_score': model_score,
+                  'prompt_correct': prompt_correct,}))
 
     temperatures = '|'.join(map(str, [temperature, top_p, temperature_coding, top_p_coding]))
     trial_number = str(trial_number)
     trial_number = '0'*(4-len(trial_number)) + trial_number
-    folder_name = f'trial={trial_number}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}'
+    folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{prompt_correct}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}'
+    save_current_exp(folder_name, all_captured, final_submission, notebooks=config_dir)
+    
+    return model_score 
+    # save_current_exp(folder_name, all_captured)
 
-    save_current_exp(folder_name, all_captured)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--gpu', type=int, required=True)    
+    gpu = parser.parse_args().gpu
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu) # create its own world
+    storage_str = "sqlite:///tuning.db"
+    try:
+        study = optuna.load_study(study_name="tuning", storage=storage_str)
+    except:
+        study = optuna.create_study(
+            direction="maximize",
+            storage=storage_str,  # Specify the storage URL here.
+            study_name="tuning",
+            pruner=optuna.pruners.MedianPruner(),
+            load_if_exists=True,
+        )
+    from functools import partial
+    objective = partial(objective, tuning_dir="tuning")
+    study.optimize(objective, n_trials=100)
