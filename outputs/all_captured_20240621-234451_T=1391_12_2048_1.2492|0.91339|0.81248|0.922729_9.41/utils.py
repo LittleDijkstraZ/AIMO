@@ -77,19 +77,18 @@ except Exception as e:
     try:
         shell_output = subprocess.check_output(batcmd, shell=True, stderr=subprocess.STDOUT).decode('utf8')
         return_value = return_last_print(shell_output, -1)
-        try:
-            code_output = round(float(eval(return_value))) % 1000
-        except:
-            code_output = return_value
+        
+        code_output = round(float(eval(return_value))) % 1000
     except subprocess.CalledProcessError as e:
-        try:
-            shell_output = e.output.decode('utf-8')
-            return_value = 'FAIL'
-            code_output = -1
-        except Exception as e:
-            shell_output = 'Unknown Error'
-            return_value = 'FAIL'
-            code_output = -1
+        shell_output = e.output.decode('utf-8')
+        return_value = 'FAIL'
+        code_output = -1
+    except Exception as e:
+        shell_output = 'Unknown Error'
+        return_value = 'FAIL'
+        code_output = -1
+
+    print(shell_output)
 
     if return_shell_output:
         if return_value=='FAIL':
@@ -101,7 +100,14 @@ except Exception as e:
             CODE_STATUS = True
         os.remove(code_file)
         return return_value, CODE_STATUS  
-
+    
+    # if return_shell_output:
+    #     if code_output==-1:
+    #         CODE_STATUS = False
+    #     else:
+    #         CODE_STATUS = True
+    #     os.remove(code_file)
+    #     return code_output, CODE_STATUS  
     
     os.remove(code_file)
     return code_output
