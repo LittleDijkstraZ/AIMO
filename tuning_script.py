@@ -373,11 +373,7 @@ Assistant:"""
                         else:
                             temperature_inner=temperature
                             top_p_inner = top_p
-<<<<<<< HEAD
-                            top_k_inner = top_k_coding
-=======
                             top_k_inner = top_k
->>>>>>> 044bc423a3d41e84aff1b027215c2ebc174148d7
                             try:
                                 if (decoded_output[-len("``````output"):]=="``````output"):
                                     code_text = decoded_output.split('```python')[-1].split("``````")[0]
