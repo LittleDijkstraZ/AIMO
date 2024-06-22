@@ -39,20 +39,16 @@ from transformers import (
 
 import pandas as pd
 
-def objective(trial, 
-              tuning_dir):
-    
-    with open(f'outputs_test.txt', 'w') as fh:
-            fh.write('x')
-    
-    trial_number = trial.number
-    
-    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    os.makedirs(tuning_dir, exist_ok=True)
-    config_dir = f'{tuning_dir}/config_{timestamp}.json'
+def objective(trial=None, 
+              tuning_dir=None,
+              config_dir=None):
     
 
-    code = """
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    
+    if config_dir == None:
+        trial_number = trial.number
+        code = """
 Below is a math problem you are to solve (positive numerical answer):
 \"{}\"
 To accomplish this, first determine a sympy-based approach for solving the problem by listing each step to take and what functions need to be called in each step. Be clear so even an idiot can follow your instructions, and remember, your final answer should be positive integer, not an algebraic expression!
@@ -61,7 +57,7 @@ Write the entire script covering all the steps (use comments and document it wel
 Assistant: 
 
 Interesting, let's analyze step by step:"""
-    cot = \
+        cot = \
 """
 
 Below is a math problem you are to solve (positive numerical answer!):
@@ -70,36 +66,43 @@ Analyze this problem and think step by step to come to a solution with programs.
 
 Assistant:"""
 
-    config = {
-        'temperature': trial.suggest_float('temperature', 0.5, 2.0),
-        'top_p': trial.suggest_float('top_p', 0.85, 1.0),
-        'top_k': trial.suggest_int('top_k', 16, 96, step=16),
-        'temperature_coding': trial.suggest_float('temperature_coding', 0.5, 2.0),
-        'top_p_coding': trial.suggest_float('top_p_coding', 0.85, 1.0),
-        'top_k_coding': trial.suggest_int('top_k_coding', 16, 96, step=16),
 
-        # 'n_repetitions': trial.suggest_int('n_repetitions', 8, 16),
-        'n_repetitions': 12,
-        # 'TOTAL_TOKENS': trial.suggest_int('TOTAL_TOKENS', 1024, 2048),
-        'TOTAL_TOKENS': 1600,
-        'REFLECTION': False,
-        'starting_counts': trial.suggest_categorical('starting_counts', [0, 1, 2]),
-        # 'starting_counts': (3,2),
-        'prompt_options': [code, cot],
+        os.makedirs(tuning_dir, exist_ok=True)
+        config_dir = f'{tuning_dir}/config_{timestamp}.json'
+        config = {
+            'temperature': trial.suggest_float('temperature', 0.5, 2.0),
+            'top_p': trial.suggest_float('top_p', 0.85, 1.0),
+            'top_k': trial.suggest_int('top_k', 16, 96, step=16),
+            'temperature_coding': trial.suggest_float('temperature_coding', 0.5, 2.0),
+            'top_p_coding': trial.suggest_float('top_p_coding', 0.85, 1.0),
+            'top_k_coding': trial.suggest_int('top_k_coding', 16, 96, step=16),
 
-    }
-    starting_counts_options = [(4,2), (2,2), (2,4)]
-    config['starting_counts'] = starting_counts_options[config['starting_counts']]
+            # 'n_repetitions': trial.suggest_int('n_repetitions', 8, 16),
+            'n_repetitions': 12,
+            # 'TOTAL_TOKENS': trial.suggest_int('TOTAL_TOKENS', 1024, 2048),
+            'TOTAL_TOKENS': 1600,
+            'REFLECTION': False,
+            'starting_counts': trial.suggest_categorical('starting_counts', [0, 1, 2]),
+            # 'starting_counts': (3,2),
+            'prompt_options': [code, cot],
+
+        }
+        starting_counts_options = [(4,2), (2,2), (2,4)]
+        config['starting_counts'] = starting_counts_options[config['starting_counts']]
+        with open(config_dir, "w") as f:
+            json.dump(config, f, indent=2)
+    else:
+        with open(config_dir, "r") as f:
+            config = json.load(f)
+        trial_number = None
+            
+
 
 
     for _ in range(5): # clean the cache
                     torch.cuda.empty_cache()
                     gc.collect()
                     time.sleep(0.2)
-
-
-    with open(config_dir, "w") as f:
-        json.dump(config, f, indent=2)
 
 
     torch.backends.cuda.enable_mem_efficient_sdp(False)
@@ -109,7 +112,6 @@ Assistant:"""
 
 
     DEBUG = False
-
     QUANT = False
 
     if QUANT:
@@ -137,7 +139,6 @@ Assistant:"""
     
     # TIME_LIMIT = 500 * len(submission_df)
     TIME_LIMIT = 31500
-
 
     MODEL_PATH = "./input/deepseek-math"#"/kaggle/input/gemma/transformers/7b-it/1"
     DEEP = True
@@ -577,12 +578,16 @@ Assistant:"""
 
     print(json.dumps({'model_score': model_score,
                   'prompt_correct': prompt_correct,}))
-
-    trial_number = str(trial_number)
-    trial_number = '0'*(4-len(trial_number)) + trial_number
-    folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{prompt_correct}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}'
-    save_current_exp(folder_name, all_captured, final_submission, notebooks=[config_dir])
-    
+    if trial is not None:
+        trial_number = str(trial_number)
+        trial_number = '0'*(4-len(trial_number)) + trial_number
+        folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{prompt_correct}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}'
+        save_current_exp(folder_name, all_captured, final_submission, notebooks=[config_dir])
+    else:
+        temperatures = '|'.join(map(str, [temperature, top_p, temperature_coding, top_p_coding]))
+        folder_name = f'outputs/all_captured_{timestamp}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}_{model_score:.2f}'
+        save_current_exp(folder_name, all_captured, final_submission, notebooks=['./tuning_script.py', './utils.py'])
+                
     return model_score 
     # save_current_exp(folder_name, all_captured)
 
