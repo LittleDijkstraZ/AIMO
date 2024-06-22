@@ -554,7 +554,7 @@ Assistant:"""
                 + valid_answers_generated/total_answers_to_gen * 10
 
             if i==int(tuning_dir[-1]): # expert development
-                model_score = cur_score * 2
+                model_score += cur_score * 2
             else:
                 model_score += cur_score
             # env.predict(sample_submission)
