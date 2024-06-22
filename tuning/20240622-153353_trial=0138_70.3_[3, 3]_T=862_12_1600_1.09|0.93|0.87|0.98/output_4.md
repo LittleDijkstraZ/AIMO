@@ -554,7 +554,7 @@ def find_f_100():
     for n in range(2, 101):
         # Use the second equation to calculate f(n)
         f_n = 2 * f_1
-
+```
 BOXED []
 BOXED FINAL 
 [(199, 2), (100, 2), (80, 1), (63, 1), (70, 1), (376, 1)]
