@@ -43,7 +43,8 @@ def objective(trial=None,
               tuning_dir=None,
               config_dir=None,
               prompt_choices=None,
-              config_choices=None):
+              config_choices=None,
+              all_seeds=[42, 666]):
     
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -99,12 +100,18 @@ Assistant:"""
     elif prompt_choices is not None and config_choices is not None:
 
         base_config_dir = trial.suggest_categorical('config_choices', config_choices)
+        config_index = config_choices.index(base_config_dir)
         with open(base_config_dir, 'r') as f:
-            config = json.load(base_config_dir)
+            config = json.load(f)
 
         code = trial.suggest_categorical('prompt_option', prompt_choices)
+        prompt_index = prompt_choices.index(code)
         cot = code
         config['prompt_options'] = [code, cot]
+        config['n_repetitions'] = 16
+        config['TOTAL_TOKENS'] = 1600
+        print(config)
+
 
         with open(config_dir, "w") as f:
             json.dump(config, f, indent=2)
@@ -117,15 +124,12 @@ Assistant:"""
 
 
     for _ in range(5): # clean the cache
-                    torch.cuda.empty_cache()
-                    gc.collect()
-                    time.sleep(0.2)
+        torch.cuda.empty_cache()
+        gc.collect()
+        time.sleep(0.2)
 
 
     torch.backends.cuda.enable_mem_efficient_sdp(False)
-    set_seed(42)
-
-    NOTEBOOK_START_TIME = time.time()
 
 
     DEBUG = False
@@ -168,38 +172,38 @@ Assistant:"""
     device_i = 'cuda:0' # get first visible gpu
 
     device_map = [('model.embed_tokens', device_i),
-                 ('model.layers.0', device_i),
-                 ('model.layers.1', device_i),
-                 ('model.layers.2', device_i),
-                 ('model.layers.3', device_i),
-                 ('model.layers.4', device_i),
-                 ('model.layers.5', device_i),
-                 ('model.layers.6', device_i),
-                 ('model.layers.7', device_i),
-                 ('model.layers.8', device_i),
-                 ('model.layers.9', device_i),
-                 ('model.layers.10', device_i),
-                 ('model.layers.11', device_i),
-                 ('model.layers.12', device_i),
-                 ('model.layers.13', device_i),
-                 ('model.layers.14', device_i),
-                 ('model.layers.15', device_i),
-                 ('model.layers.16', device_i),
-                 ('model.layers.17', device_i),
-                 ('model.layers.18', device_i),
-                 ('model.layers.19', device_i),
-                 ('model.layers.20', device_i),
-                 ('model.layers.21', device_i),
-                 ('model.layers.22', device_i),
-                 ('model.layers.23', device_i),
-                 ('model.layers.24', device_i),
-                 ('model.layers.25', device_i),
-                 ('model.layers.26', device_i),
-                 ('model.layers.27', device_i),
-                 ('model.layers.28', device_i),
-                 ('model.layers.29', device_i),
-                 ('model.norm', device_i),
-                 ('lm_head', device_i)]
+                ('model.layers.0', device_i),
+                ('model.layers.1', device_i),
+                ('model.layers.2', device_i),
+                ('model.layers.3', device_i),
+                ('model.layers.4', device_i),
+                ('model.layers.5', device_i),
+                ('model.layers.6', device_i),
+                ('model.layers.7', device_i),
+                ('model.layers.8', device_i),
+                ('model.layers.9', device_i),
+                ('model.layers.10', device_i),
+                ('model.layers.11', device_i),
+                ('model.layers.12', device_i),
+                ('model.layers.13', device_i),
+                ('model.layers.14', device_i),
+                ('model.layers.15', device_i),
+                ('model.layers.16', device_i),
+                ('model.layers.17', device_i),
+                ('model.layers.18', device_i),
+                ('model.layers.19', device_i),
+                ('model.layers.20', device_i),
+                ('model.layers.21', device_i),
+                ('model.layers.22', device_i),
+                ('model.layers.23', device_i),
+                ('model.layers.24', device_i),
+                ('model.layers.25', device_i),
+                ('model.layers.26', device_i),
+                ('model.layers.27', device_i),
+                ('model.layers.28', device_i),
+                ('model.layers.29', device_i),
+                ('model.norm', device_i),
+                ('lm_head', device_i)]
 
     device_map = {ii:jj for (ii,jj) in device_map}
 
@@ -255,361 +259,384 @@ Assistant:"""
     stop_words = ["```output", "```python", "```\nOutput" , ")\n```" , "``````output"] #,  
     stop_words_ids = [tokenizer(stop_word, return_tensors='pt', add_special_tokens=False)['input_ids'].squeeze() for stop_word in stop_words]
     stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stop_words_ids)])
-    
-    # print(model.dtype, model.hf_device_map)
+    total_model_score = 0
+    for cur_seed in all_seeds:
+
+        
+        for _ in range(5): # clean the cache
+            torch.cuda.empty_cache()
+            gc.collect()
+            time.sleep(0.2)
+        set_seed(cur_seed)
+
+        NOTEBOOK_START_TIME = time.time()
+
+        # print(model.dtype, model.hf_device_map)
 
 
-    code = config['prompt_options'][0]
-    cot = config['prompt_options'][1]
-    prompt_options = [code,cot]
+        
+        prompt_options = config['prompt_options']
 
 
-    torch.cuda.empty_cache()
-    gc.collect()
+        torch.cuda.empty_cache()
+        gc.collect()
 
-    temperature = config['temperature']
-    top_p = config['top_p']
-    top_k = config['top_k']
+        temperature = config['temperature']
+        top_p = config['top_p']
+        top_k = config['top_k']
 
 
-    temperature_coding = config['temperature_coding'] # code need to be strict, but still should have some creativity to get through difficult problems
-    top_p_coding = config['top_p_coding']
-    top_k_coding = config['top_k_coding']
+        temperature_coding = config['temperature_coding'] # code need to be strict, but still should have some creativity to get through difficult problems
+        top_p_coding = config['top_p_coding']
+        top_k_coding = config['top_k_coding']
 
-    starting_counts = config['starting_counts'] # 2:2, 2:3, 3:2, 2:4, 4:2 
-    temperatures = '|'.join(map(lambda x: f'{x:.02f}', [temperature, top_p, temperature_coding, top_p_coding]))
-    
-    total_results = {}
-    total_answers = {}
-    best_stats = {}
-    total_outputs = {}
-    question_type_counts = {}
+        starting_counts = config['starting_counts'] # 2:2, 2:3, 3:2, 2:4, 4:2 
+        temperatures = '|'.join(map(lambda x: f'{x:.02f}', [temperature, top_p, temperature_coding, top_p_coding]))
+        
+        total_results = {}
+        total_answers = {}
+        best_stats = {}
+        total_outputs = {}
+        question_type_counts = {}
 
-    all_captured = []
-    all_self_reflections = []
+        all_captured = []
+        all_self_reflections = []
 
-    final_submission = pd.DataFrame(columns=submission_df.columns)
-    model_score = 0
-    TOTAL_REFLECTION_TIME = 0
+        final_submission = pd.DataFrame(columns=submission_df.columns)
+        model_score = 0
+        TOTAL_REFLECTION_TIME = 0
 
-    total_prompt_correct_count = [0 for _ in range(len(prompt_options))]
-    for i in tqdm(range(len(test_df))):
-        test, sample_submission = test_df.loc[i:i, :], submission_df.loc[i:i, :]
-        # iterate through every problems in the environment
-        # use a loop get the test row and the corresponding sample_submissions row
+        total_prompt_correct_count = [0 for _ in range(len(prompt_options))]
+        for i in tqdm(range(len(test_df))):
+            test, sample_submission = test_df.loc[i:i, :], submission_df.loc[i:i, :]
+            # iterate through every problems in the environment
+            # use a loop get the test row and the corresponding sample_submissions row
 
-        total_answers_to_gen = 0
-        valid_answers_generated = 0
-        answers_matched = 0
-        self_reflection_list = []
-        prompt_correct_count = [0 for _ in range(len(prompt_options))]
-        with io.capture_output() as captured: # i capture the printouts
+            total_answers_to_gen = 0
+            valid_answers_generated = 0
+            answers_matched = 0
+            self_reflection_list = []
+            prompt_correct_count = [0 for _ in range(len(prompt_options))]
+            with io.capture_output() as captured: # i capture the printouts
 
-            print(f"Solving problem {i} ...")
-            TIME_SPENT = time.time() - NOTEBOOK_START_TIME
+                print(f"Solving problem {i} ...")
+                TIME_SPENT = time.time() - NOTEBOOK_START_TIME
 
-            if TIME_SPENT>TIME_LIMIT: # submit the prediction if no time is left
-                sample_submission['answer'] = 0
-                # env.predict(sample_submission)
-                final_submission = pd.concat([final_submission, sample_submission])
-                break
-                
-            for trial_j in tqdm(range(n_repetitions)):   
-                problem = test['problem'].values[0]
-                print(f"\n\n\n## QUESTION {i} - {trial_j} \n- TIME_SPENT : {TIME_SPENT:.0f} secs\n")
-                
-                best, best_count = best_stats.get(i,(-1,-1))
-                # if best_count>np.sqrt(trial_j)+1:
-                #     print("SKIPPING CAUSE ALREADY FOUND BEST")
-                #     continue
-
-                total_answers_to_gen += 1
+                if TIME_SPENT>TIME_LIMIT: # submit the prediction if no time is left
+                    sample_submission['answer'] = 0
+                    # env.predict(sample_submission)
+                    final_submission = pd.concat([final_submission, sample_submission])
+                    break
                     
-                outputs = total_outputs.get(i,[])
-                text_answers, code_answers = question_type_counts.get(i,starting_counts)
-                results = total_results.get(i,[])
-                answers = total_answers.get(i,[])
-                
-                for _ in range(5): # clean the cache
-                    torch.cuda.empty_cache()
-                    gc.collect()
-                    time.sleep(0.2)
-
-                try:
-                    ALREADY_GEN = 0
-                    code_error = None
-                    code_error_count = 0
-                    code_output = -1
-                    counts = np.array([text_answers,code_answers])
-
-                    draw_index = choice(range(len(prompt_options)), 1, p=counts/counts.sum())[0]
-                    draw = [prompt_options[draw_index]]
-                    # draw = choice(prompt_options, 1,
-                    #             p=counts/counts.sum())
-                    initail_message = draw[0].format(problem,"{}")            
-                    prompt = f"User:\n{initail_message}"
-
-                    current_printed = len(prompt)
-                    print(f"{trial_j}_{prompt}\n")
-
-                    model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
-                    input_len = len(model_inputs['input_ids'][0])
-
-                    generation_output = model.generate(**model_inputs, 
-                                                max_new_tokens=TOTAL_TOKENS-ALREADY_GEN,
-                                                return_dict_in_generate=USE_PAST_KEY,
-                                                do_sample = True,
-                                                temperature = temperature,
-                                                top_p = top_p,
-                                                top_k = top_k,
-                                                num_return_sequences=1,
-                                                stopping_criteria = stopping_criteria,
-                                                pad_token_id=tokenizer.eos_token_id) #
-
-                    if USE_PAST_KEY:
-                        output_ids = generation_output.sequences[0]
-                    else:
-                        output_ids = generation_output[0]
-                    decoded_output = tokenizer.decode(output_ids, skip_special_tokens=True)
-                    print(f"{decoded_output[current_printed:]}\n")
-                    current_printed += len(decoded_output[current_printed:])
-                    cummulative_code = ""
+                for trial_j in tqdm(range(n_repetitions)):   
+                    problem = test['problem'].values[0]
+                    print(f"\n\n\n## QUESTION {i} - {trial_j} \n- TIME_SPENT : {TIME_SPENT:.0f} secs\n")
                     
-                    
-                    stop_word_cond = False
-                    for stop_word in stop_words:
-                        stop_word_cond = stop_word_cond or (decoded_output[-len(stop_word):]==stop_word)
+                    best, best_count = best_stats.get(i,(-1,-1))
+                    # if best_count>np.sqrt(trial_j)+1:
+                    #     print("SKIPPING CAUSE ALREADY FOUND BEST")
+                    #     continue
+
+                    total_answers_to_gen += 1
                         
+                    outputs = total_outputs.get(i,[])
+                    text_answers, code_answers = question_type_counts.get(i,starting_counts)
+                    results = total_results.get(i,[])
+                    answers = total_answers.get(i,[])
                     
-                    while (stop_word_cond) and (ALREADY_GEN<(TOTAL_TOKENS)):
+                    for _ in range(5): # clean the cache
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                        time.sleep(0.2)
 
-                        if (decoded_output[-len("```python"):]=="```python"):
-                            temperature_inner=temperature_coding
-                            top_p_inner = top_p_coding
-                            top_k_inner = top_k_coding
-                            prompt = decoded_output
-                        else:
-                            temperature_inner=temperature
-                            top_p_inner = top_p
-                            top_k_inner = top_k
-                            try:
-                                if (decoded_output[-len("``````output"):]=="``````output"):
-                                    code_text = decoded_output.split('```python')[-1].split("``````")[0]
-                                else:
-                                    code_text = decoded_output.split('```python')[-1].split("```")[0]
-                                
+                    try:
+                        ALREADY_GEN = 0
+                        code_error = None
+                        code_error_count = 0
+                        code_output = -1
+                        counts = np.array([text_answers,code_answers])
 
-                                cummulative_code+=code_text
-                                code_output, CODE_STATUS = process_code(cummulative_code, return_shell_output=True)
-                                print('CODE RESULTS', code_output)
-                                
-                                # TODO: try to add the following prompt:
-                                # Senario: CODE RESULTS 888.888888888889
-                                # The result is not a positive integer, so we must have made a mistake somewhere. Let's go back and check our work.
+                        draw_index = choice(range(len(prompt_options)), 1, p=counts/counts.sum())[0]
+                        draw = [prompt_options[draw_index]]
+                        # draw = choice(prompt_options, 1,
+                        #             p=counts/counts.sum())
+                        initail_message = draw[0].format(problem,"{}")            
+                        prompt = f"User:\n{initail_message}"
 
-
-                                if code_error==code_output:
-                                    code_error_count+=1
-                                else:
-                                    code_error=code_output
-                                    code_error_count = 0
-
-                                if not CODE_STATUS:
-                                    cummulative_code = cummulative_code[:-len(code_text)]
-
-                                    if code_error_count>=2: # more allowance
-                                        print("REPEATED ERRORS")
-                                        break
-
-                            except Exception as e:
-                                print(e)
-                                print('ERROR PARSING CODE')
-                                code_output = -1
-
-                        
-                            if code_output!=-1:
-                                self_correcting_prompt = ''
-                            
-                                if (decoded_output[-len(")\n```"):]==")\n```"):
-                                    prompt = decoded_output+'```output\n'+str(code_output)+'\n```\n'+self_correcting_prompt
-                                else:
-                                    prompt = decoded_output+'\n'+str(code_output)+'\n```\n' +self_correcting_prompt
-                            else:
-                                prompt = decoded_output
-                                cummulative_code=""
-
-
+                        current_printed = len(prompt)
+                        print(f"{trial_j}_{prompt}\n")
 
                         model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
-                        ALREADY_GEN =  len(model_inputs['input_ids'][0])-input_len
-
-                        if USE_PAST_KEY:
-                            old_values = generation_output.past_key_values
-                        else:
-                            old_values = None
+                        input_len = len(model_inputs['input_ids'][0])
 
                         generation_output = model.generate(**model_inputs, 
-                                                    max_new_tokens=TOTAL_TOKENS-ALREADY_GEN, 
+                                                    max_new_tokens=TOTAL_TOKENS-ALREADY_GEN,
                                                     return_dict_in_generate=USE_PAST_KEY,
-                                                    past_key_values=old_values,
                                                     do_sample = True,
-                                                    temperature = temperature_inner,
-                                                    top_p = top_p_inner,
-                                                    top_k = top_k_inner,
-                                                    num_return_sequences=1, 
+                                                    temperature = temperature,
+                                                    top_p = top_p,
+                                                    top_k = top_k,
+                                                    num_return_sequences=1,
                                                     stopping_criteria = stopping_criteria,
-                                                    pad_token_id=tokenizer.eos_token_id) # for open ended gen
-
+                                                    pad_token_id=tokenizer.eos_token_id) #
 
                         if USE_PAST_KEY:
                             output_ids = generation_output.sequences[0]
                         else:
                             output_ids = generation_output[0]
                         decoded_output = tokenizer.decode(output_ids, skip_special_tokens=True)
-                        print(f"\nINTERMEDIATE OUT :\n{decoded_output[current_printed:]}\n")
-                        current_printed+=len(decoded_output[current_printed:])
+                        print(f"{decoded_output[current_printed:]}\n")
+                        current_printed += len(decoded_output[current_printed:])
+                        cummulative_code = ""
+                        
                         
                         stop_word_cond = False
                         for stop_word in stop_words:
                             stop_word_cond = stop_word_cond or (decoded_output[-len(stop_word):]==stop_word)
-
-                    if USE_PAST_KEY:
-                        output_ids = generation_output.sequences[0]
-                    else:
-                        output_ids = generation_output[0]
-
-                    raw_output = tokenizer.decode(output_ids[input_len:], skip_special_tokens=True)
-                    result_output = process_text_output(raw_output)
-                    
-                    try:
-                        code_output = round(float(eval(code_output))) % 1000
-                    except Exception as e:
-                        print(e,'final_eval')
-                        code_output = -1
-
-                except Exception as e:
-                    print(e,"5")
-                    result_output, code_output = -1, -1
-
-                valid_answer_obtained = False
-                if code_output!=-1:
-                    outputs.append(code_output)
-                    code_answers+=1
-                    valid_answer_obtained = True
-
-                if result_output!=-1:
-                    outputs.append(result_output)
-                    text_answers+=1
-                    valid_answer_obtained = True
-
-                valid_answers_generated += int(valid_answer_obtained)
-
-                # self reflection: jason
-                REFLECTION_TIME_START = time.time()
-                self_reflection_text = 'None'
-                if result_output == -1 or result_output != test['answer'].values[0]:
-                    if REFLECTION:
-                        self_reflection = f"\n\nUser: Thanks for trying. In fact, the correct answer is {test['answer'].values[0]}. Can you briefly summarize what you did wrong and what will you do differently if you are to try again?\n\nAssistant:"
-                        prompt = decoded_output + self_reflection
+                            
                         
-                        model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
-                        input_tokens_len = len(model_inputs['input_ids'][0])
-                        old_values = generation_output.past_key_values
-                        self_reflection_output = model.generate(**model_inputs, 
-                                                        max_new_tokens=128, 
+                        while (stop_word_cond) and (ALREADY_GEN<(TOTAL_TOKENS)):
+
+                            if (decoded_output[-len("```python"):]=="```python"):
+                                temperature_inner=temperature_coding
+                                top_p_inner = top_p_coding
+                                top_k_inner = top_k_coding
+                                prompt = decoded_output
+                            else:
+                                temperature_inner=temperature
+                                top_p_inner = top_p
+                                top_k_inner = top_k
+                                try:
+                                    if (decoded_output[-len("``````output"):]=="``````output"):
+                                        code_text = decoded_output.split('```python')[-1].split("``````")[0]
+                                    else:
+                                        code_text = decoded_output.split('```python')[-1].split("```")[0]
+                                    
+
+                                    cummulative_code+=code_text
+                                    code_output, CODE_STATUS = process_code(cummulative_code, return_shell_output=True)
+                                    print('CODE RESULTS', code_output)
+                                    
+                                    # TODO: try to add the following prompt:
+                                    # Senario: CODE RESULTS 888.888888888889
+                                    # The result is not a positive integer, so we must have made a mistake somewhere. Let's go back and check our work.
+
+
+                                    if code_error==code_output:
+                                        code_error_count+=1
+                                    else:
+                                        code_error=code_output
+                                        code_error_count = 0
+
+                                    if not CODE_STATUS:
+                                        cummulative_code = cummulative_code[:-len(code_text)]
+
+                                        if code_error_count>=2: # more allowance
+                                            print("REPEATED ERRORS")
+                                            break
+
+                                except Exception as e:
+                                    print(e)
+                                    print('ERROR PARSING CODE')
+                                    code_output = -1
+
+                            
+                                if code_output!=-1:
+                                    self_correcting_prompt = ''
+                                
+                                    if (decoded_output[-len(")\n```"):]==")\n```"):
+                                        prompt = decoded_output+'```output\n'+str(code_output)+'\n```\n'+self_correcting_prompt
+                                    else:
+                                        prompt = decoded_output+'\n'+str(code_output)+'\n```\n' +self_correcting_prompt
+                                else:
+                                    prompt = decoded_output
+                                    cummulative_code=""
+
+
+
+                            model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
+                            ALREADY_GEN =  len(model_inputs['input_ids'][0])-input_len
+
+                            if USE_PAST_KEY:
+                                old_values = generation_output.past_key_values
+                            else:
+                                old_values = None
+
+                            generation_output = model.generate(**model_inputs, 
+                                                        max_new_tokens=TOTAL_TOKENS-ALREADY_GEN, 
                                                         return_dict_in_generate=USE_PAST_KEY,
                                                         past_key_values=old_values,
                                                         do_sample = True,
-                                                        temperature = 0.9,
-                                                        top_p = 1,
+                                                        temperature = temperature_inner,
+                                                        top_p = top_p_inner,
+                                                        top_k = top_k_inner,
                                                         num_return_sequences=1, 
                                                         stopping_criteria = stopping_criteria,
-                                                        
                                                         pad_token_id=tokenizer.eos_token_id) # for open ended gen
-                        new_content = self_reflection_output.sequences[0][input_tokens_len:]
-                        self_reflection_text = tokenizer.decode(new_content, skip_special_tokens=True)
-                else:
-                    prompt_correct_count[draw_index] += 1
-                self_reflection_text = f'\n### Question {i} {trial_j} reflection:\n' + self_reflection_text
-                self_reflection_list.append(self_reflection_text)
-                REFLECTION_TIME_END = time.time() - REFLECTION_TIME_START
-                TOTAL_REFLECTION_TIME += REFLECTION_TIME_END
 
-                if len(outputs) > 0:
-                    occurances = Counter(outputs).most_common()
-                    print(occurances)
-                    if occurances[0][1] > best_count:
-                        print("GOOD ANSWER UPDATED!")
-                        best = occurances[0][0]
-                        best_count = occurances[0][1]
-                        # in case the following break happens while the best changes
-                        # get the best in advance
-                        best_stats[i] = (best, best_count) 
-                    if occurances[0][1] > 3: # originally 5
-                        print("ANSWER FOUND!")
-                        break
 
-                results.append(result_output)
-                answers.append(code_output)
-                
-                best_stats[i] = (best, best_count) 
-                question_type_counts[i] = (text_answers, code_answers)
-                total_outputs[i] = outputs
-                
-                total_results[i] = results
-                total_answers[i] = answers
+                            if USE_PAST_KEY:
+                                output_ids = generation_output.sequences[0]
+                            else:
+                                output_ids = generation_output[0]
+                            decoded_output = tokenizer.decode(output_ids, skip_special_tokens=True)
+                            print(f"\nINTERMEDIATE OUT :\n{decoded_output[current_printed:]}\n")
+                            current_printed+=len(decoded_output[current_printed:])
+                            
+                            stop_word_cond = False
+                            for stop_word in stop_words:
+                                stop_word_cond = stop_word_cond or (decoded_output[-len(stop_word):]==stop_word)
 
-                print("code_answers",code_answers-starting_counts[1],"text_answers",text_answers-starting_counts[0])
-                if DEBUG:
-                    break
+                        if USE_PAST_KEY:
+                            output_ids = generation_output.sequences[0]
+                        else:
+                            output_ids = generation_output[0]
+
+                        raw_output = tokenizer.decode(output_ids[input_len:], skip_special_tokens=True)
+                        result_output = process_text_output(raw_output)
+                        
+                        try:
+                            code_output = round(float(eval(code_output))) % 1000
+                        except Exception as e:
+                            print(e,'final_eval')
+                            code_output = -1
+
+                    except Exception as e:
+                        print(e,"5")
+                        result_output, code_output = -1, -1
+
+                    valid_answer_obtained = False
+                    if code_output!=-1:
+                        outputs.append(code_output)
+                        code_answers+=1
+                        valid_answer_obtained = True
+
+                    if result_output!=-1:
+                        outputs.append(result_output)
+                        text_answers+=1
+                        valid_answer_obtained = True
+
+                    valid_answers_generated += int(valid_answer_obtained)
+
+                    # self reflection: jason
+                    REFLECTION_TIME_START = time.time()
+                    self_reflection_text = 'None'
+                    if result_output == -1 or result_output != test['answer'].values[0]:
+                        if REFLECTION:
+                            self_reflection = f"\n\nUser: Thanks for trying. In fact, the correct answer is {test['answer'].values[0]}. Can you briefly summarize what you did wrong and what will you do differently if you are to try again?\n\nAssistant:"
+                            prompt = decoded_output + self_reflection
+                            
+                            model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
+                            input_tokens_len = len(model_inputs['input_ids'][0])
+                            old_values = generation_output.past_key_values
+                            self_reflection_output = model.generate(**model_inputs, 
+                                                            max_new_tokens=128, 
+                                                            return_dict_in_generate=USE_PAST_KEY,
+                                                            past_key_values=old_values,
+                                                            do_sample = True,
+                                                            temperature = 0.9,
+                                                            top_p = 1,
+                                                            num_return_sequences=1, 
+                                                            stopping_criteria = stopping_criteria,
+                                                            
+                                                            pad_token_id=tokenizer.eos_token_id) # for open ended gen
+                            new_content = self_reflection_output.sequences[0][input_tokens_len:]
+                            self_reflection_text = tokenizer.decode(new_content, skip_special_tokens=True)
+                    else:
+                        prompt_correct_count[draw_index] += 1
+                    self_reflection_text = f'\n### Question {i} {trial_j} reflection:\n' + self_reflection_text
+                    self_reflection_list.append(self_reflection_text)
+                    REFLECTION_TIME_END = time.time() - REFLECTION_TIME_START
+                    TOTAL_REFLECTION_TIME += REFLECTION_TIME_END
+
+                    if len(outputs) > 0:
+                        occurances = Counter(outputs).most_common()
+                        print(occurances)
+                        if occurances[0][1] > best_count:
+                            print("GOOD ANSWER UPDATED!")
+                            best = occurances[0][0]
+                            best_count = occurances[0][1]
+                            # in case the following break happens while the best changes
+                            # get the best in advance
+                            best_stats[i] = (best, best_count) 
+                        if occurances[0][1] > 3: # originally 5
+                            print("ANSWER FOUND!")
+                            break
+
+                    results.append(result_output)
+                    answers.append(code_output)
                     
-            print(f"Predicted best answer: {best_stats}")
-            sample_submission['answer'] = best_stats[i][0]
-            correct_answer = test['answer'].values[0]
-            current_outputs = total_outputs.get(i, [])
-            answers_matched = Counter(current_outputs).get(correct_answer, 0)
-            best_matched = best_stats[i][0] == correct_answer # True when most common is correct
+                    best_stats[i] = (best, best_count) 
+                    question_type_counts[i] = (text_answers, code_answers)
+                    total_outputs[i] = outputs
+                    
+                    total_results[i] = results
+                    total_answers[i] = answers
 
-            cur_score = best_matched * 100 + answers_matched/len(current_outputs) * 10 \
-                + valid_answers_generated/total_answers_to_gen * 10
+                    print("code_answers",code_answers-starting_counts[1],"text_answers",text_answers-starting_counts[0])
+                    if DEBUG:
+                        break
+                        
+                print(f"Predicted best answer: {best_stats}")
+                sample_submission['answer'] = best_stats[i][0]
+                correct_answer = test['answer'].values[0]
+                current_outputs = total_outputs.get(i, [])
+                answers_matched = Counter(current_outputs).get(correct_answer, 0)
+                best_matched = best_stats[i][0] == correct_answer # True when most common is correct
 
-            if i==int(tuning_dir[-1]): # expert development
-                model_score += cur_score * 2
+                cur_score = best_matched * 100 + answers_matched/max(len(current_outputs),1) * 10 \
+                    + valid_answers_generated/max(total_answers_to_gen,1) * 10
+
+
+                if str(i)==tuning_dir[-1]: # expert development
+                    model_score += cur_score * 2
+                else:
+                    model_score += cur_score
+                # env.predict(sample_submission)
+                final_submission = pd.concat([final_submission, sample_submission])
+
+            cur_process = captured.stdout
+            cur_process += '\nprompt correctness:'+ str(prompt_correct_count)
+            cur_reflections = ''.join(self_reflection_list)
+            all_self_reflections.append(cur_reflections)
+            try:
+                cur_process += '\n##Score: ' + str(cur_score)
+            except:
+                pass
+            cur_process += '\n\n## Self-Reflections\n'+cur_reflections
+            cur_process += '\n---\n'
+
+            with open(f'outputs_{i}.txt', 'w') as fh:
+                fh.write(cur_process)
+            all_captured.append(cur_process)
+            total_prompt_correct_count = np.array(total_prompt_correct_count) + np.array(prompt_correct_count)
+
+        TIME_SPENT = time.time() - NOTEBOOK_START_TIME - TOTAL_REFLECTION_TIME
+        model_score = model_score / len(test_df)
+        prompt_correct = total_prompt_correct_count.tolist()
+
+        print(json.dumps({'model_score': model_score,
+                    'prompt_correct': prompt_correct,}))
+        if trial is not None:
+            trial_number = str(trial_number)
+            trial_number = '0'*(4-len(trial_number)) + trial_number
+            if prompt_choices==None:
+                folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{prompt_correct}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}'
             else:
-                model_score += cur_score
-            # env.predict(sample_submission)
-            final_submission = pd.concat([final_submission, sample_submission])
-
-        cur_process = captured.stdout
-        cur_process += '\nprompt correctness:'+ str(prompt_correct_count)
-        cur_reflections = ''.join(self_reflection_list)
-        all_self_reflections.append(cur_reflections)
-
-        cur_process += '\n\n## Self-Reflections\n'+cur_reflections
-        cur_process += '\n---\n'
-
-        with open(f'outputs_{i}.txt', 'w') as fh:
-            fh.write(cur_process)
-        all_captured.append(cur_process)
-        total_prompt_correct_count = np.array(total_prompt_correct_count) + np.array(prompt_correct_count)
-
-    TIME_SPENT = time.time() - NOTEBOOK_START_TIME - TOTAL_REFLECTION_TIME
-    model_score = model_score / len(test_df)
-    prompt_correct = total_prompt_correct_count.tolist()
-
-    print(json.dumps({'model_score': model_score,
-                  'prompt_correct': prompt_correct,}))
-    if trial is not None:
-        trial_number = str(trial_number)
-        trial_number = '0'*(4-len(trial_number)) + trial_number
-        folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{prompt_correct}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}'
-        save_current_exp(folder_name, all_captured, final_submission, notebooks=[config_dir])
-    else:
-        temperatures = '|'.join(map(str, [temperature, top_p, temperature_coding, top_p_coding]))
-        folder_name = f'outputs/all_captured_{timestamp}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}_{model_score:.2f}'
-        save_current_exp(folder_name, all_captured, final_submission, notebooks=['./tuning_script.py', './utils.py'])
                 
-    return model_score 
+                folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{sum(prompt_correct)}_T={int(TIME_SPENT)}_{prompt_index}_{config_index}_{cur_seed}'
+            save_current_exp(folder_name, all_captured, final_submission, notebooks=[config_dir])
+        else:
+            temperatures = '|'.join(map(str, [temperature, top_p, temperature_coding, top_p_coding]))
+            folder_name = f'outputs/all_captured_{timestamp}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}_{model_score:.2f}'
+            save_current_exp(folder_name, all_captured, final_submission, notebooks=['./tuning_script.py', './utils.py'])
+        total_model_score += model_score
+
+        for _ in range(5): # clean the cache
+            torch.cuda.empty_cache()
+            gc.collect()
+            time.sleep(0.2)
+    return total_model_score/len(all_seeds) 
     # save_current_exp(folder_name, all_captured)
 
 
@@ -619,24 +646,26 @@ if __name__ == "__main__":
     parser.add_argument('--gpu', type=int, required=True)    
     gpu = parser.parse_args().gpu
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu) # create its own world
-    storage_str = "sqlite:///tuning_2.db"
+    tuning_name = "tuning_match"
+    storage_str = f"sqlite:///{tuning_name}.db"
     try:
-        study = optuna.load_study(study_name="tuning_2", storage=storage_str)
+        study = optuna.load_study(study_name=f"{tuning_name}", storage=storage_str)
     except:
         study = optuna.create_study(
             direction="maximize",
             storage=storage_str,  # Specify the storage URL here.
-            study_name="tuning_2",
+            study_name=f"{tuning_name}",
             pruner=optuna.pruners.MedianPruner(),
             load_if_exists=True,
         )
     from functools import partial
 
     from prompt_pool import prompt_choices
-    
-
+    import glob
+    config_choices = glob.glob('./specialized_configs/*.json')
 
     objective = partial(objective, 
-                        tuning_dir="tuning_2",
-                        prompt_choices=prompt_choices)
-    study.optimize(objective, n_trials=72)
+                        tuning_dir=f"{tuning_name}",
+                        prompt_choices=prompt_choices,
+                        config_choices=config_choices)
+    study.optimize(objective, n_trials=120)
