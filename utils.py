@@ -35,7 +35,7 @@ def return_last_print(output, n=-1, grab_error=False):
             if len(error_locations)>1:
                 error_text = 'Traceback: line ' + error_locations[-1]
             else:
-                error_text = output
+                error_text = output.strip().split(' ')[-20:]
             return error_text
     else:
         return ""
