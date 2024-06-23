@@ -44,7 +44,9 @@ def objective(trial=None,
               config_dir=None,
               prompt_choices=None,
               config_choices=None,
-              all_seeds=[42, 666]):
+              all_seeds=[42, 666],
+              notebooks=[],
+              skip=False):
     
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -342,9 +344,9 @@ Assistant:"""
                     print(f"\n\n\n## QUESTION {i} - {trial_j} \n- TIME_SPENT : {TIME_SPENT:.0f} secs\n")
                     
                     best, best_count = best_stats.get(i,(-1,-1))
-                    # if best_count>np.sqrt(trial_j)+1:
-                    #     print("SKIPPING CAUSE ALREADY FOUND BEST")
-                    #     continue
+                    if best_count>np.sqrt(trial_j) + 0.5 and skip:
+                        print("SKIPPING CAUSE ALREADY FOUND BEST")
+                        continue
 
                     total_answers_to_gen += 1
                         
@@ -596,11 +598,11 @@ Assistant:"""
                 cur_score = best_matched * 100 + answers_matched/max(len(current_outputs),1) * 10 \
                     + valid_answers_generated/max(total_answers_to_gen,1) * 10
 
+                if tuning_dir:
+                    if str(i)==tuning_dir[-1]: # expert development
+                        model_score += cur_score # add one more of itself
 
-                if str(i)==tuning_dir[-1]: # expert development
-                    model_score += cur_score * 2
-                else:
-                    model_score += cur_score
+                model_score += cur_score
                 # env.predict(sample_submission)
                 final_submission = pd.concat([final_submission, sample_submission])
 
@@ -639,10 +641,10 @@ Assistant:"""
                     folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{sum(prompt_correct)}_T={int(TIME_SPENT)}_{prompt_index}_{config_index}_{cur_seed}'
                 else:
                     folder_name = f'{tuning_dir}/{timestamp}_trial={trial_number}_{model_score:.1f}_{sum(prompt_correct)}_T={int(TIME_SPENT)}_{prompt_index}_{temperatures}_{cur_seed}'
-            save_current_exp(folder_name, all_captured, final_submission, notebooks=[config_dir])
+            save_current_exp(folder_name, all_captured, final_submission, notebooks=[config_dir]+notebooks)
         else:
             folder_name = f'outputs/all_captured_{timestamp}_T={int(TIME_SPENT)}_{n_repetitions}_{TOTAL_TOKENS}_{temperatures}_{model_score:.2f}'
-            save_current_exp(folder_name, all_captured, final_submission, notebooks=[])
+            save_current_exp(folder_name, all_captured, final_submission, notebooks=notebooks)
         total_model_score += model_score
 
         for _ in range(5): # clean the cache
