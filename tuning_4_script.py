@@ -344,7 +344,7 @@ Assistant:"""
                     print(f"\n\n\n## QUESTION {i} - {trial_j} \n- TIME_SPENT : {TIME_SPENT:.0f} secs\n")
                     
                     best, best_count = best_stats.get(i,(-1,-1))
-                    if best_count>np.sqrt(trial_j) and skip:
+                    if best_count>np.sqrt(trial_j) + 0.5 and skip:
                         print("SKIPPING CAUSE ALREADY FOUND BEST")
                         continue
 
