@@ -697,4 +697,4 @@ if __name__ == "__main__":
     objective = partial(objective, 
                         tuning_dir=f"{tuning_name}",
                         prompt_choices=prompt_choices,)
-    study.optimize(objective, n_trials=120)
+    study.optimize(objective, n_trials=240)
