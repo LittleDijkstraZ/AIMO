@@ -46,7 +46,10 @@ def objective(trial=None,
               config_choices=None,
               all_seeds=[42, 666],
               notebooks=[],
-              skip=False):
+              skip=False,
+              TIME_PER_QUESTION = None,
+              discount_code=False,
+              model_dir = './input/deepseek-math-2',):
     
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -172,7 +175,7 @@ Assistant:"""
     # TIME_LIMIT = 500 * len(submission_df)
     TIME_LIMIT = 31500
 
-    MODEL_PATH = "./input/deepseek-math"#"/kaggle/input/gemma/transformers/7b-it/1"
+    MODEL_PATH = model_dir #"/kaggle/input/gemma/transformers/7b-it/1"
     DEEP = True
 
     model_config = AutoConfig.from_pretrained(MODEL_PATH)
@@ -320,6 +323,7 @@ Assistant:"""
         total_prompt_correct_count = [0 for _ in range(len(prompt_options))]
         for i in tqdm(range(len(test_df))):
             test, sample_submission = test_df.loc[i:i, :], submission_df.loc[i:i, :]
+            QUESTION_START = time.time()
             # iterate through every problems in the environment
             # use a loop get the test row and the corresponding sample_submissions row
 
@@ -344,7 +348,7 @@ Assistant:"""
                     print(f"\n\n\n## QUESTION {i} - {trial_j} \n- TIME_SPENT : {TIME_SPENT:.0f} secs\n")
                     
                     best, best_count = best_stats.get(i,(-1,-1))
-                    if best_count>np.sqrt(trial_j) + 0.5 and skip:
+                    if best_count>np.sqrt(trial_j) + 1 and skip:
                         print("SKIPPING CAUSE ALREADY FOUND BEST")
                         continue
 
@@ -378,7 +382,7 @@ Assistant:"""
                         print(f"{trial_j}_{prompt}\n")
 
                         model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
-                        input_len = len(model_inputs['input_ids'][0])
+                        input_len = len(model_inputs['input_ids'][0]) # remove the prompt length
 
                         generation_output = model.generate(**model_inputs, 
                                                     max_new_tokens=TOTAL_TOKENS-ALREADY_GEN,
@@ -406,20 +410,21 @@ Assistant:"""
                             stop_word_cond = stop_word_cond or (decoded_output[-len(stop_word):]==stop_word)
                             
                         
+                        TOTAL_CODE_LEN = 0
                         while (stop_word_cond) and (ALREADY_GEN<(TOTAL_TOKENS)):
 
-                            if (decoded_output[-len("```python"):]=="```python"):
+                            if (decoded_output[-len("```python"):]=="```python"): # if the model want to start coding
                                 temperature_inner=temperature_coding
                                 top_p_inner = top_p_coding
                                 top_k_inner = top_k_coding
                                 prompt = decoded_output
-                            else:
+                            else: # if the model want to analyze code results
                                 temperature_inner=temperature
                                 top_p_inner = top_p
                                 top_k_inner = top_k
                                 try:
                                     if (decoded_output[-len("``````output"):]=="``````output"):
-                                        code_text = decoded_output.split('```python')[-1].split("``````")[0]
+                                        code_text = decoded_output.split('```python')[-1].split("``````")[0] 
                                     else:
                                         code_text = decoded_output.split('```python')[-1].split("```")[0]
                                     
@@ -467,6 +472,9 @@ Assistant:"""
 
                             model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
                             ALREADY_GEN =  len(model_inputs['input_ids'][0])-input_len
+                            if discount_code:
+                                TOTAL_CODE_LEN = len(tokenizer(cummulative_code).input_ids)
+                                ALREADY_GEN = ALREADY_GEN - TOTAL_CODE_LEN
 
                             if USE_PAST_KEY:
                                 old_values = generation_output.past_key_values
@@ -507,7 +515,8 @@ Assistant:"""
                         result_output = process_text_output(raw_output)
                         
                         try:
-                            code_output = round(float(eval(code_output))) % 1000
+                            # code_output = round(float(eval(code_output))) % 1000
+                            code_output = round(float(eval(code_output))) 
                         except Exception as e:
                             print(e,'final_eval')
                             code_output = -1
@@ -563,14 +572,16 @@ Assistant:"""
                     if len(outputs) > 0:
                         occurances = Counter(outputs).most_common()
                         print(occurances)
-                        if occurances[0][1] > best_count:
+                        top_occur = [occ for occ in occurances if occ[1]==occurances[0][1]]
+                        oidx = np.random.randint(len(top_occur))
+                        if occurances[oidx][1] > best_count:
                             print("GOOD ANSWER UPDATED!")
-                            best = occurances[0][0]
-                            best_count = occurances[0][1]
+                            best = round(occurances[oidx][0]) % 1000
+                            best_count = occurances[oidx][1]
                             # in case the following break happens while the best changes
                             # get the best in advance
                             best_stats[i] = (best, best_count) 
-                        if occurances[0][1] > 3: # originally 5
+                        if occurances[0][1] > 4: # originally 5
                             print("ANSWER FOUND!")
                             break
 
@@ -585,8 +596,11 @@ Assistant:"""
                     total_answers[i] = answers
 
                     print("code_answers",code_answers-starting_counts[1],"text_answers",text_answers-starting_counts[0])
-                    if DEBUG:
-                        break
+                    # if DEBUG:
+                        # break
+                    if TIME_PER_QUESTION is not None:
+                        if time.time()-QUESTION_START>TIME_PER_QUESTION:
+                            break
                         
                 print(f"Predicted best answer: {best_stats}")
                 sample_submission['answer'] = best_stats[i][0]
@@ -617,7 +631,7 @@ Assistant:"""
             cur_process += '\n\n## Self-Reflections\n'+cur_reflections
             cur_process += '\n---\n'
 
-            with open(f'outputs_{i}.txt', 'w') as fh:
+            with open(f'outputs_{i}.md', 'w') as fh:
                 fh.write(cur_process)
             all_captured.append(cur_process)
             total_prompt_correct_count = np.array(total_prompt_correct_count) + np.array(prompt_correct_count)
