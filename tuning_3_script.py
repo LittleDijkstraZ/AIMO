@@ -57,13 +57,20 @@ def objective(trial=None,
 
 
     if config_dir == None and prompt_choices == None:
+#         code = \
+# """
+# Below is a math problem you are to solve (natural number answer):
+# \"{}\"
+# To accomplish this, first list the problem's constraints, conditions and related knowledge, and thens solve the problem step by step. Be clear so even an idiot can follow your instructions. After solving the problem, output the final numerical answer within \\boxed{}.
+
+# Assistant:"""
         code = \
 """
-Below is a math problem you are to solve (natural number answer):
+Question (hint: positive numerical answer):
 \"{}\"
-To accomplish this, first list the problem's constraints, conditions and related knowledge, and thens solve the problem step by step. Be clear so even an idiot can follow your instructions. After solving the problem, output the final numerical answer within \\boxed{}.
+Please put your final solution into \\boxed{}.
 
-Assistant:"""
+Step-by-step Solution:"""
         cot = \
 """
 Below is a math problem you are to solve (natural number answer!):
