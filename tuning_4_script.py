@@ -515,7 +515,8 @@ Assistant:"""
                         result_output = process_text_output(raw_output)
                         
                         try:
-                            code_output = round(float(eval(code_output))) % 1000
+                            # code_output = round(float(eval(code_output))) % 1000
+                            code_output = round(float(eval(code_output))) 
                         except Exception as e:
                             print(e,'final_eval')
                             code_output = -1
@@ -575,7 +576,7 @@ Assistant:"""
                         oidx = np.random.randint(len(top_occur))
                         if occurances[oidx][1] > best_count:
                             print("GOOD ANSWER UPDATED!")
-                            best = occurances[oidx][0]
+                            best = round(occurances[oidx][0]) % 1000
                             best_count = occurances[oidx][1]
                             # in case the following break happens while the best changes
                             # get the best in advance
@@ -630,7 +631,7 @@ Assistant:"""
             cur_process += '\n\n## Self-Reflections\n'+cur_reflections
             cur_process += '\n---\n'
 
-            with open(f'outputs_{i}.txt', 'w') as fh:
+            with open(f'outputs_{i}.md', 'w') as fh:
                 fh.write(cur_process)
             all_captured.append(cur_process)
             total_prompt_correct_count = np.array(total_prompt_correct_count) + np.array(prompt_correct_count)
