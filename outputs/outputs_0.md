@@ -482,7 +482,7 @@ def distance_to_origin():
     eq = Eq(k*x**2 - 2*k*x + l - 4, 0)
 
     # solve the equation for x
-
+```
 
 BOXED []
 BOXED FINAL 0
