@@ -293,7 +293,7 @@ Assistant:"""
                     print(f"\n\n\n## QUESTION {i} - {trial_j} \n- TIME_SPENT : {TIME_SPENT:.0f} secs\n")
                     
                     best, best_count = best_stats.get(i,(-1,-1))
-                    if best_count>np.sqrt(trial_j) + 1 and skip:
+                    if best_count>np.sqrt(trial_j) and skip:
                         print("SKIPPING CAUSE ALREADY FOUND BEST")
                         continue
 
@@ -392,7 +392,7 @@ Assistant:"""
                                     if not CODE_STATUS:
                                         cummulative_code = cummulative_code[:-len(code_text)]
 
-                                        if code_error_count>=2: # more allowance
+                                        if code_error_count>=1: # more allowance # actually lets go back
                                             print("REPEATED ERRORS")
                                             break
 
@@ -526,7 +526,7 @@ Assistant:"""
                             # in case the following break happens while the best changes
                             # get the best in advance
                             best_stats[i] = (best, best_count) 
-                        if occurances[0][1] > 4: # originally 5
+                        if occurances[0][1] > 5: # originally 5
                             print("ANSWER FOUND!")
                             break
 
