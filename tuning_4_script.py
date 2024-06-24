@@ -49,7 +49,9 @@ def objective(trial=None,
               skip=False,
               TIME_PER_QUESTION = None,
               discount_code=False,
-              model_dir = './input/deepseek-math-2',):
+              model_dir = './input/deepseek-math-2',
+              model_name = None,
+              cache_dir = None,):
     
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -145,16 +147,6 @@ Assistant:"""
 
 
     DEBUG = False
-    QUANT = False
-
-    if QUANT:
-        from transformers import BitsAndBytesConfig
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit = True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-        )
 
     USE_PAST_KEY = True
 
@@ -164,95 +156,48 @@ Assistant:"""
 
     TOTAL_TOKENS = config['TOTAL_TOKENS'] # if PRIVATE else 512
     REFLECTION = config.get('REFLECTION', False)
-    # TOTAL_TOKENS = 512 # if PRIVATE else 512
-    # test_df = pd.read_csv('./input/ai-mathematical-olympiad-prize/test.csv')
-    # submission_df = pd.read_csv('./input/ai-mathematical-olympiad-prize/sample_submission.csv')
-    # test_df = pd.read_csv('./test.csv')
-    test_df = pd.read_csv('./test.csv')
 
+    test_df = pd.read_csv('./test.csv')
     submission_df = pd.read_csv('./sample_submission.csv')
     
-    # TIME_LIMIT = 500 * len(submission_df)
     TIME_LIMIT = 31500
 
     MODEL_PATH = model_dir #"/kaggle/input/gemma/transformers/7b-it/1"
     DEEP = True
 
-    model_config = AutoConfig.from_pretrained(MODEL_PATH)
-    model_config.gradient_checkpointing = True
+    device_map = 'cuda:0'
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    
-    device_i = 'cuda:0' # get first visible gpu
 
-    device_map = [('model.embed_tokens', device_i),
-                ('model.layers.0', device_i),
-                ('model.layers.1', device_i),
-                ('model.layers.2', device_i),
-                ('model.layers.3', device_i),
-                ('model.layers.4', device_i),
-                ('model.layers.5', device_i),
-                ('model.layers.6', device_i),
-                ('model.layers.7', device_i),
-                ('model.layers.8', device_i),
-                ('model.layers.9', device_i),
-                ('model.layers.10', device_i),
-                ('model.layers.11', device_i),
-                ('model.layers.12', device_i),
-                ('model.layers.13', device_i),
-                ('model.layers.14', device_i),
-                ('model.layers.15', device_i),
-                ('model.layers.16', device_i),
-                ('model.layers.17', device_i),
-                ('model.layers.18', device_i),
-                ('model.layers.19', device_i),
-                ('model.layers.20', device_i),
-                ('model.layers.21', device_i),
-                ('model.layers.22', device_i),
-                ('model.layers.23', device_i),
-                ('model.layers.24', device_i),
-                ('model.layers.25', device_i),
-                ('model.layers.26', device_i),
-                ('model.layers.27', device_i),
-                ('model.layers.28', device_i),
-                ('model.layers.29', device_i),
-                ('model.norm', device_i),
-                ('lm_head', device_i)]
+    if MODEL_PATH is not None:
+        model_config = AutoConfig.from_pretrained(MODEL_PATH)
+        model_config.gradient_checkpointing = True
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
 
-    device_map = {ii:jj for (ii,jj) in device_map}
-
-    if QUANT:
-        from transformers import BitsAndBytesConfig
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit = True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-        )
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_PATH,
-            device_map="sequential",
-            torch_dtype="auto",
-            trust_remote_code=True, 
-            quantization_config=quantization_config,
-            config=model_config,
-        )
-    else:  
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_PATH,
             device_map=device_map,
             torch_dtype="auto",
             trust_remote_code=True,
-            #quantization_config=quantization_config,
             config=model_config
         )
-    
+    else:
+        model_config = AutoConfig.from_pretrained(model_name, cache_dir=cache_dir)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            cache_dir = "./input/deepseek-math-7b-instruct/",
+            device_map=device_map,
+            torch_dtype="auto",
+            trust_remote_code=True,
+            config=model_config
+        )
+        
     pipeline = transformers.pipeline(
-    "text-generation",
-    model=model,
-    tokenizer=tokenizer,
-    torch_dtype='auto',
-    device_map=device_map,
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
+        torch_dtype='auto',
+        device_map=device_map,
     )
     
     from transformers import StoppingCriteriaList
