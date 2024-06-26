@@ -46,13 +46,12 @@ def objective(trial=None,
               config_choices=None,
               all_seeds=[666, 999, 888],
               notebooks=['./utils.py', './tuning_5_script.py'],
-              skip=False,
+              skip=True,
               TIME_PER_QUESTION = None,
               discount_code=False,
               model_dir = './input/deepseek-math-2',
               model_name = None,
               cache_dir = None,):
-    DEBUG = False
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     
@@ -183,7 +182,7 @@ Assistant:"""
     torch.backends.cuda.enable_mem_efficient_sdp(False)
 
 
-    DEBUG = True
+    DEBUG = False
 
     USE_PAST_KEY = True
 
@@ -668,7 +667,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--gpu', type=int, required=True)    
     gpu = parser.parse_args().gpu
+
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu) # create its own world
+    
     tuning_name = "tuning_5_prompts_matched"
     storage_str = f"sqlite:///{tuning_name}.db"
     try:
@@ -695,4 +696,47 @@ if __name__ == "__main__":
                         tuning_dir=f"{tuning_name}",
                         config_choices=config_choices,)
                         # prompt_choices=prompt_choices,)
-    study.optimize(objective, n_trials=240)
+    study.optimize(objective, n_trials=240, n_jobs=8)
+
+
+
+# pool = Pool(1)
+# func = partial(run_training, out_name)
+# args = [{
+#     'not_causal': not_causal_list[i],
+#     # 'use_residual': use_residual_list[i],
+#     'use_residual': True,
+#     'n_layer': n_layers,
+#     'use_pe': use_pe,
+#     'general_seed': seed,
+#     'choice': choice,
+
+#     'causal_training': causal_training,
+#     'batch_size': batch_size, 
+#     'max_iters': max_iters,
+#     'learning_rate': learning_rate,
+#     'warmup_iters': warmup_iters,
+    
+#     'command': commands_dict[choice],  
+#     'save_best_loss': False,
+#     'save_final': False,
+#     'autoregressive_training': autoregressive_training,
+#     # 'permute': permuteMap(use_residual_list[i]), # for permute, set the layers to be permuted
+#     # 'permute_length': 8,
+#     # 'permute': False,
+#     'save_all_intermediate': True,
+
+#     # 'no_att_residual': no_att_residual_list[i],
+#     # 'no_mlp_residual': no_mlp_residual_list[i],
+#     # 'batch_size': bs[i],
+#     # 'message': '',
+#     'layerwise_pe': [0],
+#     # 'layerwise_pe': False,
+#     'layer_pe': layer_pe,
+#     # 'use_flesh': True,
+#     # 'layerwise_pe_list': layerwise_pe_list[i],
+# } for i in range(len(use_residual_list))]
+# # for arg in args:
+#     # func(arg)
+# pool.map(func, args)
+# pool.close()  
