@@ -657,8 +657,8 @@ Assistant:"""
             gc.collect()
             time.sleep(0.2)
 
-        if DEBUG:
-            break
+        # if DEBUG:
+        #     break
     return total_model_score/len(all_seeds) 
     # save_current_exp(folder_name, all_captured)
 
