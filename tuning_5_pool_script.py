@@ -377,7 +377,6 @@ Assistant:"""
 
                     try:
                         ALREADY_GEN = 0
-                        CODE_GEN = 0
                         code_error = None
                         code_error_count = 0
                         code_output = -1
@@ -422,7 +421,7 @@ Assistant:"""
                             stop_word_cond = stop_word_cond or (decoded_output[-len(stop_word):]==stop_word)
                             
                         
-                        TOTAL_CODE_LEN = 0
+                        CULMULATIVE_LEN = 0
                         while (stop_word_cond) and (ALREADY_GEN<(TOTAL_TOKENS)):
 
                             if (decoded_output[-len("```python"):]=="```python"): # if the model want to start coding
@@ -442,6 +441,7 @@ Assistant:"""
                                     
 
                                     cummulative_code+=code_text
+                                    CULMULATIVE_LEN += len(tokenizer(code_text).input_ids)
                                     code_output, CODE_STATUS = process_code(cummulative_code, return_shell_output=True)
                                     print('CODE RESULTS', code_output)                            
         
@@ -480,11 +480,10 @@ Assistant:"""
                             model_inputs = tokenizer(prompt, return_tensors='pt').to(device_map)
                             ALREADY_GEN =  len(model_inputs['input_ids'][0])-input_len
                             if discount_code:
-                                TOTAL_CODE_LEN = len(tokenizer(cummulative_code).input_ids)
-                                if TOTAL_CODE_LEN > 512:
+                                if CULMULATIVE_LEN > 512:
                                     print("CODE TOO LONG")
                                     break
-                                ALREADY_GEN = ALREADY_GEN - TOTAL_CODE_LEN
+                                ALREADY_GEN = ALREADY_GEN - CULMULATIVE_LEN
                                 
 
                             if USE_PAST_KEY:
