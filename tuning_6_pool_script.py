@@ -81,12 +81,10 @@ df_math = df_math[df_math['Keep'] == 1]
 
 few_shot_prompt = \
 """**Problem:** 
-
 \"{}\"
 Put your final answer within $\\boxed{}$.
 
 **Solution:** 
-
 Let's think step by step:
 {}
 """
@@ -140,6 +138,25 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 # Load the model
 
+CODE_PROMPT = \
+"""
+Below is a math problem you are to solve (positive numerical answer):
+**Problem**
+\"{}\"
+To accomplish this, first determine a sympy-based approach for solving the problem by listing each step to take and what functions need to be called in each step. Be clear so even an idiot can follow your instructions, and remember, your final answer should be positive integer, not an algebraic expression!
+Write the entire script covering all the steps (use comments and document it well) and print the result. After solving the problem, output the final numerical answer within $\\boxed{}$.
+
+**Solution:** 
+"""
+
+COT_PROMPT = \
+"""
+Below is a math problem you are to solve (natural number answer!):
+**Problem**
+\"{}\"
+Analyze the problem and think step by step to come to a solution with programs. After solving the problem, output the final numerical answer within $\\boxed{}$.
+
+**Solution:**"""
 
 few_shot_template = \
 '''
@@ -148,15 +165,7 @@ few_shot_template = \
 {}
 
 ---
-
-Now, below is a math problem you are to solve (positive numerical answer):
-\"{}\"
-To accomplish this, first determine a sympy-based approach for solving the problem by listing each step to take and what functions need to be called in each step. Be clear so even an idiot can follow your instructions, and remember, your final answer should be positive integer, not an algebraic expression!
-Write the entire script covering all the steps (use comments and document it well) and print the result. After solving the problem, output the final numerical answer within $\\boxed{}$.
-
-**Solution:** 
-
-Let's think step by step:'''
+'''
 
 def objective(trial=None, 
               tuning_dir=None,
@@ -173,12 +182,11 @@ def objective(trial=None,
               code_error_threshold=1, # number of times the code error is allowed to be repeated
               TIME_PER_QUESTION = None,
               discount_code=False,
-              model_dir = './input/deepseek-math-2',
+              model_dir = './input/deepseek-math',
               model_name = None,
               cache_dir = None,
               device = None,
               set_seed_everytime = False,
-
               ):
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -284,15 +292,6 @@ Assistant:"""
         config['code_error_threshold'] = code_error_threshold
         
         addtional_msg = str(discount_code) + str(skip_threshold) + str(finish_threshold) + str(code_error_threshold)
-
-        # prompt_choice_idx = config['prompt_options']
-
-        # if config['prompt_options'] == 0:
-        #     config['prompt_options'] = [code, code]
-        # elif config['prompt_options'] == 1:
-        #     config['prompt_options'] = [cot, cot]
-        # elif config['prompt_options'] == 2:
-        #     config['prompt_options'] = [code, cot]   
 
     elif config_dir is not None:
         print(f'from config_dir: {config_dir}')
@@ -497,6 +496,8 @@ Assistant:"""
             top_docs = np.array(top_docs)[best_indices]
             top_docs_counts = np.ones(len(top_docs)) * 2
 
+            few_shot_success = np.array([3, 3])  # 0: no, 1: fewshot
+
             with io.capture_output() as captured: # i capture the printouts
 
                 print(f"Solving problem {i} ...")
@@ -541,20 +542,23 @@ Assistant:"""
                         counts = np.array([text_answers,code_answers])
 
                         # adaptively choosing the prompt
-                        if few_shot_template is not None:
-                            draw_index = 0
-                            top_doc_idx = choice(range(len(top_docs_counts)), 1, p=top_docs_counts/top_docs_counts.sum())[0]
+                        IS_FEWSHOT = np.random.choice(range(len(few_shot_success)), 1, p=few_shot_success/few_shot_success.sum())[0]
+                        if few_shot_template is not None and IS_FEWSHOT:
+                            draw_index = np.random.choice(range(len(prompt_options)), 1, p=counts/counts.sum())[0]
+                            draw = [CODE_PROMPT, COT_PROMPT][draw_index]
+
+                            full_template = few_shot_template + draw
+                            top_doc_idx = np.random.choice(range(len(top_docs_counts)), 1, p=top_docs_counts/top_docs_counts.sum())[0]
                             qa_pair = top_docs[top_doc_idx]
-                            initail_message = few_shot_template.format(qa_pair, problem,"{}") 
+                            initail_message = full_template.format(qa_pair, problem,"{}") 
                             prompt = f"{initail_message}"
-                            IS_FEWSHOT = True
+                            
                         else:
-                            draw_index = choice(range(len(prompt_options)), 1, p=counts/counts.sum())[0]
+                            draw_index = np.random.choice(range(len(prompt_options)), 1, p=counts/counts.sum())[0]
                             draw = [prompt_options[draw_index]]
              
                             initail_message = draw[0].format(problem,"{}") 
                             prompt = f"User:\n{initail_message}"
-                            IS_FEWSHOT = False
 
                         current_printed = len(prompt)
                         print(f"{trial_j}_{prompt}\n")
@@ -716,6 +720,7 @@ Assistant:"""
 
                     valid_answers_generated += int(valid_answer_obtained)
                     top_docs_counts[top_doc_idx] += int(valid_answer_obtained)
+                    few_shot_success[int(IS_FEWSHOT)] += int(valid_answer_obtained)
 
                     # self reflection: jason
                     REFLECTION_TIME_START = time.time()
