@@ -141,17 +141,18 @@ from sklearn.metrics.pairwise import cosine_similarity
 CODE_PROMPT = \
 """
 Below is a math problem you are to solve (positive numerical answer):
+
 **Problem**
 \"{}\"
 To accomplish this, first determine a sympy-based approach for solving the problem by listing each step to take and what functions need to be called in each step. Be clear so even an idiot can follow your instructions, and remember, your final answer should be positive integer, not an algebraic expression!
 Write the entire script covering all the steps (use comments and document it well) and print the result. After solving the problem, output the final numerical answer within $\\boxed{}$.
 
-**Solution:** 
-"""
+**Solution:**"""
 
 COT_PROMPT = \
 """
 Below is a math problem you are to solve (natural number answer!):
+
 **Problem**
 \"{}\"
 Analyze the problem and think step by step to come to a solution with programs. After solving the problem, output the final numerical answer within $\\boxed{}$.
@@ -364,7 +365,11 @@ Assistant:"""
 
     device_map = 'cuda:0' if device is None else 'cuda:'+str(device)
 
-    retriever = SentenceTransformer('./input/all-MiniLM-L6-v2', cache_folder='input/all-MiniLM-L6-v2', local_files_only=True, device=device_map)
+    try:
+        retriever = SentenceTransformer('./input/all-MiniLM-L6-v2', cache_folder='input/all-MiniLM-L6-v2', device=device_map)
+    except:
+        retriever = SentenceTransformer('all-MiniLM-L6-v2', device=device_map)
+
     embeddings = retriever.encode(Q_list)
 
     if MODEL_PATH is not None:
@@ -535,7 +540,7 @@ Assistant:"""
 
                     # skip trials
                     best, best_count = best_stats.get(i,(-1,-1))
-                    if best_count>np.sqrt(trial_j) + skip_threshold and skip:
+                    if best_count>np.sqrt(trial_j) + skip_threshold and skip and trial_j>=3:
                         print("SKIPPING CAUSE ALREADY FOUND BEST")
                         continue
 
