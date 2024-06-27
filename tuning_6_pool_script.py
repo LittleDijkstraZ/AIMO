@@ -158,6 +158,16 @@ Analyze the problem and think step by step to come to a solution with programs. 
 
 **Solution:**"""
 
+FS_PROMPT = \
+'''
+**Problem:** 
+\"{}\"
+Put your final answer within $\\boxed{}$.
+
+**Solution:** 
+Let's think step by step:'''
+
+
 few_shot_template = \
 '''
 **Example**
@@ -175,7 +185,8 @@ def objective(trial=None,
               all_seeds=[666, 999, 888],
               notebooks=['./utils.py', './tuning_5_script.py'],
               few_shot_template=few_shot_template,
-              retrieval_type = 'bm25', # bm25, mix
+              few_shot_success = np.array([3, 3]),  # 0: no, 1: fewshot
+              top_n_docs = 3,
               skip=True,
               skip_threshold=0, # an additional value to skip the trials
               finish_threshold=5, # number of times the best answer should be repeated
@@ -187,6 +198,7 @@ def objective(trial=None,
               cache_dir = None,
               device = None,
               set_seed_everytime = False,
+              DEBUG = False,
               ):
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -297,17 +309,15 @@ Assistant:"""
         print(f'from config_dir: {config_dir}')
         with open(config_dir, "r") as f:
             config = json.load(f)
-        try:
-            few_shot_template = config['few_shot_template']
-            discount_code = config['discount_code']
-            skip_threshold = config['skip_threshold']
-            finish_threshold = config['finish_threshold']
-            code_error_threshold = config['code_error_threshold']
-            # config_index = config_choices.index(base_config_dir)
-            model_dir = config['MODEL_PATH']
-            addtional_msg = str(discount_code) + str(skip_threshold) + str(finish_threshold) + str(code_error_threshold)
-        except:
-            pass
+
+        few_shot_success = np.array(config.get('few_shot_success', [3, 3]))
+        few_shot_template = config.get('few_shot_template', few_shot_template)
+        top_n_docs = config.get('top_n_docs', top_n_docs)
+        skip_threshold = config.get('skip_threshold', skip_threshold)
+        finish_threshold = config.get('finish_threshold', finish_threshold)
+        code_error_threshold = config.get('code_error_threshold', code_error_threshold)
+        model_dir = config.get('MODEL_PATH', model_dir)
+        addtional_msg = str(discount_code) + str(skip_threshold) + str(finish_threshold) + str(code_error_threshold)
 
 
     if config_dir is None:  
@@ -334,7 +344,6 @@ Assistant:"""
 
     torch.backends.cuda.enable_mem_efficient_sdp(False)
 
-    DEBUG = False
 
     USE_PAST_KEY = True
 
@@ -355,7 +364,7 @@ Assistant:"""
 
     device_map = 'cuda:0' if device is None else 'cuda:'+str(device)
 
-    retriever = SentenceTransformer('all-MiniLM-L6-v2', device=device_map)
+    retriever = SentenceTransformer('./input/all-MiniLM-L6-v2', cache_folder='input/all-MiniLM-L6-v2', local_files_only=True, device=device_map)
     embeddings = retriever.encode(Q_list)
 
     if MODEL_PATH is not None:
@@ -395,12 +404,13 @@ Assistant:"""
     class StoppingCriteriaSub(StoppingCriteria):
         def __init__(self, stops = [], encounters=1):
             super().__init__()
-            self.stops = [stop.to(device_map) for stop in stops]
-            self.n_stops = len(stops)
+            self.stops = [stop.to("cuda") for stop in stops]
+            self.n_stops = len(self.stops)
             self.n_stops_for_coding = self.n_stops - 1
             self.has_code = False
             self.last_64 = None
             self.n_repeats = 0
+            # print(self.stops, self.n_stops_for_coding)
 
         def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
             for sidx, stop in enumerate(self.stops):
@@ -411,17 +421,25 @@ Assistant:"""
                     return True
             
             # handle model repetition
-            if not self.has_code:
+            if not self.has_code or DEBUG:
                 len_input_ids = len(input_ids[0])
                 if len_input_ids >= 1024: 
-                    if len_input_ids % 128 == 0 and self.n_repeats==0:
+                    if DEBUG:
+                        print('counting repeats:', self.n_repeats)
+                    if ((len_input_ids % 128) == 0) and (self.n_repeats==0):
                         self.last_64 = input_ids[0][-64:]
-                    elif len_input_ids % 128 >= 64 and self.last_64 is not None:
-                        if torch.all(torch.eq(self.last_64, input_ids[0][-64:])):
+                        if DEBUG:
+                            print('init_repeats')
+                    elif ((len_input_ids % 128) >= 64) and self.last_64 is not None:
+                        if torch.all(torch.eq(self.last_64, input_ids[0][-len(self.last_64):])):
                             self.n_repeats += 1
+                            if DEBUG:
+                                print('repeats added')
+
                     if self.n_repeats >= 2:
+                        print('breaking because of repetition')
                         return True
-                        
+            
             return False
 
 
@@ -492,11 +510,10 @@ Assistant:"""
             top_n = np.argsort(doc_scores)[::-1][:top_n]
             top_docs = [QA_pairs[i] for i in top_n]
             query_embedding = retriever.encode([problem])
-            best_indices = np.argsort(cosine_similarity(query_embedding, embeddings[top_n])[0])[-3:]
+            best_indices = np.argsort(cosine_similarity(query_embedding, embeddings[top_n])[0])[-top_n_docs:]
             top_docs = np.array(top_docs)[best_indices]
             top_docs_counts = np.ones(len(top_docs)) * 2
 
-            few_shot_success = np.array([3, 3])  # 0: no, 1: fewshot
 
             with io.capture_output() as captured: # i capture the printouts
 
@@ -534,20 +551,23 @@ Assistant:"""
                         gc.collect()
                         time.sleep(0.2)
 
+                    IS_FEWSHOT = np.random.choice(range(len(few_shot_success)), 1, p=few_shot_success/few_shot_success.sum())[0]
+                    ALREADY_GEN = 0
+                    code_error = None
+                    code_error_count = 0
+                    code_output = -1
+                    counts = np.array([text_answers,code_answers])
                     try:
-                        ALREADY_GEN = 0
-                        code_error = None
-                        code_error_count = 0
-                        code_output = -1
-                        counts = np.array([text_answers,code_answers])
-
+                       
                         # adaptively choosing the prompt
-                        IS_FEWSHOT = np.random.choice(range(len(few_shot_success)), 1, p=few_shot_success/few_shot_success.sum())[0]
                         if few_shot_template is not None and IS_FEWSHOT:
                             draw_index = np.random.choice(range(len(prompt_options)), 1, p=counts/counts.sum())[0]
                             draw = [CODE_PROMPT, COT_PROMPT][draw_index]
 
-                            full_template = few_shot_template + draw
+                            if not DEBUG:
+                                full_template = few_shot_template + draw
+                            else:
+                                full_template = few_shot_template + FS_PROMPT
                             top_doc_idx = np.random.choice(range(len(top_docs_counts)), 1, p=top_docs_counts/top_docs_counts.sum())[0]
                             qa_pair = top_docs[top_doc_idx]
                             initail_message = full_template.format(qa_pair, problem,"{}") 
@@ -563,7 +583,7 @@ Assistant:"""
                         current_printed = len(prompt)
                         print(f"{trial_j}_{prompt}\n")
 
-                        model_inputs = tokenizer(prompt, return_tensors='pt', ).to(device_map)
+                        model_inputs = tokenizer(prompt, return_tensors='pt', ).to(model.device)
                         input_len = len(model_inputs['input_ids'][0]) # remove the prompt length
 
                         generation_output = model.generate(**model_inputs, 
@@ -647,7 +667,7 @@ Assistant:"""
 
 
 
-                            model_inputs = tokenizer(prompt, return_tensors='pt').to(device_map)
+                            model_inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
                             ALREADY_GEN =  len(model_inputs['input_ids'][0])-input_len
                             if discount_code:
                                 if CULMULATIVE_LEN > 512:
@@ -719,8 +739,10 @@ Assistant:"""
 
 
                     valid_answers_generated += int(valid_answer_obtained)
-                    top_docs_counts[top_doc_idx] += int(valid_answer_obtained)
-                    few_shot_success[int(IS_FEWSHOT)] += int(valid_answer_obtained)
+                    if IS_FEWSHOT:
+                        few_shot_success[int(IS_FEWSHOT)] += int(valid_answer_obtained)
+                        top_docs_counts[top_doc_idx] += int(valid_answer_obtained)
+
 
                     # self reflection: jason
                     REFLECTION_TIME_START = time.time()
@@ -875,54 +897,28 @@ import multiprocessing
 def multiprocess_wrapper(trial, func, tuning_dir, **kwargs):
     time_stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     config_dir = f'{tuning_dir}/config_{time_stamp}.json'
-    base_config_dir = trial.suggest_categorical('config_choices', config_choices) # 4 options
-    config_index = config_choices.index(base_config_dir)
+    # config_index = config_choices.index(base_config_dir)
+    base_config_dir='specialized_configs_3/config_20240626-200624.json'
     with open(base_config_dir, 'r') as f:
         config = json.load(f)
-    code = \
-"""
-Below is a math problem you are to solve (positive numerical answer):
-\"{}\"
-To accomplish this, first determine a sympy-based approach for solving the problem by listing each step to take and what functions need to be called in each step. Be clear so even an idiot can follow your instructions, and remember, your final answer should be positive integer, not an algebraic expression!
-Write the entire script covering all the steps (use comments and document it well) and print the result. After solving the problem, output the final numerical answer within \\boxed{}.
 
-Assistant: 
 
-Interesting, let's analyze step by step:"""
-    cot = \
-"""
-Below is a math problem you are to solve (natural number answer!):
-\"{}\"
-Analyze the problem and think step by step to come to a solution with programs. After solving the problem, output the final numerical answer within \\boxed{}.
+    few_shot_rates = [[5,1],
+                        [4,2],
+                        [3,3],
+                        [2,4],
+                        [1,5],]
+    config['few_shot_success'] = few_shot_rates[trial.suggest_int('few_shot_success', 0, 4)]
+    config['top_n_docs'] = trial.suggest_int('top_n_docs', 1, 5)
+    config['temperature'] = trial.suggest_float('temperature', 0.1, 0.95)
+    config['temperature_coding'] = config['temperature'] * 0.972
 
-Assistant:"""
-    # config['prompt_options'] = trial.suggest_categorical('prompt_options', [0, 1, 2]) # 3 options
-    config['prompt_options'] = [code, cot]        
-    
-    config['n_repetitions'] = trial.suggest_int('n_repetitions', 8, 24, step=2)   
-    config['TOTAL_TOKENS'] = min(int(1350 * 24 / config['n_repetitions']), 2432)
-    # model_dirs = [
-    #     './input/deepseek-math',
-    #     './input/deepseek-math-instruct'
-    # ]
-    config['MODEL_PATH'] = './input/deepseek-math'
-    # model_choice_idx = model_dirs.index(model_dir)
-    
-    discount_code = trial.suggest_categorical('discount_code', [True, False])
-    config['TOTAL_TOKENS'] -= 512 if discount_code else 0
-    skip_threshold = trial.suggest_float('skip_threshold', 0, 1, step=0.5)
-    finish_threshold = trial.suggest_int('finish_threshold', 3, 5, step=1)
-    code_error_threshold = trial.suggest_int('code_error_threshold', 1, 3, step=1)
-    config['discount_code'] = discount_code
-    config['skip_threshold'] = skip_threshold
-    config['finish_threshold'] = finish_threshold
-    config['code_error_threshold'] = code_error_threshold
 
     with open(config_dir, "w") as f:
         json.dump(config, f, indent=2)
     
-    # model_dir = config['MODEL_PATH']
-    # addtional_msg = str(discount_code) + str(skip_threshold) + str(finish_threshold) + str(code_error_threshold)
+    
+
 
     gpu_num = [0, 1, 2, 3]
     random_seeds =[[n,] for n in [666, 777, 999, 888,]]
@@ -948,7 +944,7 @@ if __name__ == "__main__":
     # gpu = parser.parse_args().gpu
     # os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu) # create its own world
     
-    tuning_name = "tuning_5_random"
+    tuning_name = "tuning_6_fewshot"
     storage_str = f"sqlite:///{tuning_name}.db"
     try:
         study = optuna.load_study(study_name=f"{tuning_name}", storage=storage_str)
